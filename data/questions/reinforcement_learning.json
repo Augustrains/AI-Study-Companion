@@ -1,0 +1,38 @@
+{
+  "book_id": "reinforcement_learning",
+  "title": "强化学习",
+  "questions": [
+    {
+      "id": "rl_q001",
+      "knowledge_point_id": "state_action_reward",
+      "question": "在强化学习中，智能体根据当前状态选择动作后，环境通常会返回什么？",
+      "options": ["下一个状态和奖励", "训练集和测试集", "固定的正确答案", "模型参数梯度"],
+      "answer": "下一个状态和奖励",
+      "source": "《强化学习》·第 1 章·状态、动作与奖励"
+    },
+    {
+      "id": "rl_q002",
+      "knowledge_point_id": "value_function",
+      "question": "Q 学习中的 Q 值主要表示什么？",
+      "options": ["某个状态下所有动作的数量", "在某个状态采取某个动作后获得的预期回报", "环境中状态的总数量", "当前动作的执行时间"],
+      "answer": "在某个状态采取某个动作后获得的预期回报",
+      "source": "《强化学习》·第 3 章·价值函数"
+    },
+    {
+      "id": "rl_q003",
+      "knowledge_point_id": "exploration_exploitation",
+      "question": "ε-贪心策略中的随机探索主要用于解决什么问题？",
+      "options": ["避免始终只选择当前已知的最优动作", "让所有奖励都变成正数", "减少环境状态数量", "取消价值函数"],
+      "answer": "避免始终只选择当前已知的最优动作",
+      "source": "《强化学习》·第 4 章·探索与利用"
+    },
+    {
+      "id": "rl_q004",
+      "knowledge_point_id": "discounted_return",
+      "question": "强化学习中的折扣因子 γ 通常用于表达什么？",
+      "options": ["未来奖励相对于即时奖励的重要程度", "动作空间的大小", "神经网络的层数", "训练数据的数量"],
+      "answer": "未来奖励相对于即时奖励的重要程度",
+      "source": "《强化学习》·第 2 章·回报与折扣因子"
+    }
+  ]
+}

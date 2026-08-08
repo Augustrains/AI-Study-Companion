@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+
+# Frontend dependencies and build output
+front/frontend/node_modules/
+front/frontend/dist/
+.pnpm-store/
+
+# Local runtime data and temporary files
+tmp/
+*.log
+
+# IDE and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

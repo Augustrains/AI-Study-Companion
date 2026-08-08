@@ -1,0 +1,38 @@
+{
+  "book_id": "machine_learning",
+  "title": "机器学习",
+  "questions": [
+    {
+      "id": "ml_q001",
+      "knowledge_point_id": "supervised_learning",
+      "question": "监督学习的英文是什么？",
+      "options": ["Supervised Learning", "Unsupervised Learning", "Reinforcement Learning"],
+      "answer": "Supervised Learning",
+      "source": "《机器学习》/第1章/监督学习"
+    },
+    {
+      "id": "ml_q002",
+      "knowledge_point_id": "supervised_learning",
+      "question": "监督学习的英文是什么？",
+      "options": ["Supervised Learning", "Unsupervised Learning", "Reinforcement Learning"],
+      "answer": "Supervised Learning",
+      "source": "《机器学习》/第1章/监督学习"
+    },
+    {
+      "id": "ml_q003",
+      "knowledge_point_id": "linear_regression",
+      "question": "线性回归主要用于预测哪一类输出？",
+      "options": ["连续值", "类别标签", "离散动作"],
+      "answer": "连续值",
+      "source": "《机器学习》/第3章/线性模型"
+    },
+    {
+      "id": "ml_q004",
+      "knowledge_point_id": "linear_regression",
+      "question": "线性回归主要用于预测哪一类输出？",
+      "options": ["连续值", "类别标签", "离散动作"],
+      "answer": "连续值",
+      "source": "《机器学习》/第3章/线性模型"
+    }
+  ]
+}
