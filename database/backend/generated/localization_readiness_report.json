@@ -1,0 +1,16 @@
+{
+  "valid": true,
+  "quiz_count": 301,
+  "review_row_count": 301,
+  "ready_to_publish_count": 0,
+  "translation_review_counts": {
+    "pending": 301
+  },
+  "explanation_review_counts": {
+    "pending": 301
+  },
+  "decision_counts": {
+    "hold": 301
+  },
+  "errors": []
+}

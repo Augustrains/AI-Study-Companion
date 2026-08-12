@@ -1,0 +1,33 @@
+{
+  "currentState": {
+    "masteryLevel": "熟悉",
+    "masteryScore": 0.78,
+    "memoryStatus": "首次验证",
+    "memoryStabilityDays": 1,
+    "confidence": 0.61,
+    "stateVersion": 3,
+    "evidenceSummary": {
+      "acceptedEvidenceCount": 4,
+      "effectiveEvidenceWeight": 3.3,
+      "independentCorrectCount": 2,
+      "delayedCorrectCount": 0,
+      "delayedFailureCount": 0,
+      "guidedEvidenceCount": 1
+    }
+  },
+  "evidence": [
+    {
+      "evidenceId": "evidence-example-delayed-01",
+      "score": 1,
+      "isCorrect": true,
+      "evidenceStrength": "direct",
+      "taskMode": "retrieval",
+      "hintCount": 0,
+      "retryCount": 0,
+      "isIndependent": true,
+      "isDelayedRetrieval": true,
+      "scheduledIntervalDays": 4,
+      "occurredAt": "2026-08-12T08:00:00Z"
+    }
+  ]
+}

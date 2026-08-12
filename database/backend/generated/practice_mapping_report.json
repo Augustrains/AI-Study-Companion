@@ -1,0 +1,18 @@
+{
+  "valid": true,
+  "practice_item_count": 122,
+  "mapping_candidate_count": 122,
+  "pending_count": 122,
+  "source_counts": {
+    "microsoft-ai-for-beginners": 75,
+    "microsoft-ml-for-beginners": 47
+  },
+  "item_type_counts": {
+    "coding_task": 2,
+    "concept_check": 3,
+    "notebook_lab": 82,
+    "project_task": 35
+  },
+  "low_confidence_candidates": 1,
+  "note": "全部为待人工审核候选；未写入正式 item_knowledge_maps。"
+}

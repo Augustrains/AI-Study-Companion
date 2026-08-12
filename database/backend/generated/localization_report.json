@@ -1,0 +1,18 @@
+{
+  "schema_version": "quiz-localization-report.v1",
+  "locale": "zh-CN",
+  "quiz_count": 301,
+  "translated_stem_count": 301,
+  "translated_option_set_count": 301,
+  "explanation_candidate_count": 301,
+  "translation_review_counts": {
+    "pending": 301
+  },
+  "explanation_review_counts": {
+    "pending": 301
+  },
+  "ready_to_publish_count": 0,
+  "translation_method": "public_machine_translation",
+  "translation_version": "en-zh-candidate-2026-08-12",
+  "warning": "Machine-generated candidates require subject-matter review before publication."
+}

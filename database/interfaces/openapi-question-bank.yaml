@@ -1,0 +1,852 @@
+openapi: 3.1.0
+info:
+  title: Adaptive Learning Question Bank API
+  version: 1.1.0
+  description: Student-safe Quiz delivery, mastery state, algorithm integration, content review, and publication.
+servers:
+  - url: /v1
+security:
+  - bearerAuth: []
+tags:
+  - name: Assessment
+  - name: Learning State
+  - name: Algorithm Internal
+  - name: Content Admin
+paths:
+  /assessment/assignments/next:
+    post:
+      tags: [Assessment]
+      summary: Select a published Quiz and create a server-side assignment
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateAssessmentAssignmentRequest'}
+      responses:
+        '201':
+          description: A persisted assignment and question without answer fields
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/StudentQuestion'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /assessment/submissions:
+    post:
+      tags: [Assessment]
+      summary: Submit and score one Quiz answer
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/QuizSubmissionRequest'}
+      responses:
+        '201':
+          description: Submission and deterministic scoring result
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/QuizSubmissionResponse'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+  /assessment/submissions/{submissionId}/result:
+    get:
+      tags: [Assessment]
+      summary: Get the authenticated user's scoring result
+      parameters:
+        - $ref: '#/components/parameters/SubmissionId'
+      responses:
+        '200':
+          description: Scoring result without internal answer data
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/QuizSubmissionResponse'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /learners/me/knowledge-status:
+    get:
+      tags: [Learning State]
+      summary: List the authenticated learner's current knowledge and memory states
+      parameters:
+        - in: query
+          name: dueBefore
+          schema: {type: string, format: date-time}
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 200, default: 50}
+        - in: query
+          name: cursor
+          schema: {type: string}
+      responses:
+        '200':
+          description: Learner-owned mastery states; contains no answers
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: '#/components/schemas/MasteryState'}
+                  nextCursor: {type: [string, 'null']}
+  /learners/me/knowledge-status/{knowledgePointId}:
+    get:
+      tags: [Learning State]
+      summary: Get one current knowledge and memory state
+      parameters:
+        - $ref: '#/components/parameters/KnowledgePointId'
+      responses:
+        '200':
+          description: Current state
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MasteryState'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /learners/me/mastery-history:
+    get:
+      tags: [Learning State]
+      summary: List explainable mastery state transitions for the authenticated learner
+      parameters:
+        - in: query
+          name: knowledgePointId
+          schema: {type: string}
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 200, default: 50}
+        - in: query
+          name: cursor
+          schema: {type: string}
+      responses:
+        '200':
+          description: Learner-owned state history
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: '#/components/schemas/MasteryHistoryEntry'}
+                  nextCursor: {type: [string, 'null']}
+  /knowledge-points/{knowledgePointId}/prerequisites:
+    get:
+      tags: [Learning State]
+      summary: List published prerequisites for one knowledge point
+      parameters:
+        - $ref: '#/components/parameters/KnowledgePointId'
+        - in: query
+          name: direction
+          schema: {type: string, enum: [incoming, outgoing], default: incoming}
+      responses:
+        '200':
+          description: Published, acyclic prerequisite edges only
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: '#/components/schemas/PrerequisiteEdge'}
+  /internal/mastery/evidence-events:
+    get:
+      tags: [Algorithm Internal]
+      summary: Read mastery-effective evidence for the learning algorithm
+      description: Internal endpoint backed by algorithm_evidence_feed; answer and submission payloads are excluded.
+      parameters:
+        - in: query
+          name: processed
+          schema: {type: boolean, default: false}
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 1000, default: 100}
+        - in: query
+          name: cursor
+          schema: {type: string}
+      responses:
+        '200':
+          description: Evidence feed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: '#/components/schemas/MasteryEvidence'}
+                  nextCursor: {type: [string, 'null']}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /internal/mastery/updates:
+    post:
+      tags: [Algorithm Internal]
+      summary: Atomically apply an explainable mastery update
+      description: The backend must call apply_mastery_update; direct table updates are not permitted.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ApplyMasteryUpdateRequest'}
+      responses:
+        '200':
+          description: Applied or idempotently replayed update
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApplyMasteryUpdateResponse'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+  /admin/content/review-queue:
+    get:
+      tags: [Content Admin]
+      summary: List internal review items and publication blockers
+      parameters:
+        - in: query
+          name: readinessStatus
+          schema: {$ref: '#/components/schemas/ReadinessStatus'}
+        - in: query
+          name: sourceId
+          schema:
+            type: string
+            enum: [microsoft-ml-for-beginners, microsoft-ai-for-beginners]
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 200, default: 50}
+        - in: query
+          name: cursor
+          schema: {type: string}
+      responses:
+        '200':
+          description: Internal review queue; requires reviewer permission
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: '#/components/schemas/ReviewQueueItem'}
+                  nextCursor: {type: [string, 'null']}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /admin/content/mappings/{candidateId}/decision:
+    post:
+      tags: [Content Admin]
+      summary: Approve or reject a candidate knowledge mapping
+      parameters:
+        - $ref: '#/components/parameters/CandidateId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/MappingDecisionRequest'}
+      responses:
+        '200':
+          description: Updated mapping candidate
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MappingDecisionResponse'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /admin/content/items/{versionId}/review:
+    post:
+      tags: [Content Admin]
+      summary: Record answer, mapping, and source review
+      parameters:
+        - $ref: '#/components/parameters/VersionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ContentReviewRequest'}
+      responses:
+        '201':
+          description: Review record created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ContentReviewResponse'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+  /admin/content/publication-batches/{batchId}/publish:
+    post:
+      tags: [Content Admin]
+      summary: Validate and atomically publish a reviewed batch
+      parameters:
+        - $ref: '#/components/parameters/BatchId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreatePublicationBatchRequest'}
+      responses:
+        '200':
+          description: Published batch
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PublicationBatch'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+  /admin/content/localizations/{versionId}/review:
+    post:
+      tags: [Content Admin]
+      summary: Review a localized stem, options, and post-submission explanation
+      parameters:
+        - $ref: '#/components/parameters/VersionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/LocalizationReviewRequest'}
+      responses:
+        '201':
+          description: Localization review record created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/LocalizationReviewResponse'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+  /admin/content/localization-publication-batches/{batchId}/publish:
+    post:
+      tags: [Content Admin]
+      summary: Atomically publish reviewed localizations and explanations
+      parameters:
+        - $ref: '#/components/parameters/BatchId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateLocalizationPublicationBatchRequest'}
+      responses:
+        '200':
+          description: Localization batch published
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PublicationBatch'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+  /admin/content/knowledge-edges/{candidateId}/decision:
+    post:
+      tags: [Content Admin]
+      summary: Record a prerequisite candidate review decision
+      parameters:
+        - $ref: '#/components/parameters/CandidateId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/KnowledgeEdgeDecisionRequest'}
+      responses:
+        '201':
+          description: Review decision recorded; approval does not itself publish the edge
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/KnowledgeEdgeDecisionResponse'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+  /admin/content/knowledge-edge-publication-batches/{batchId}/publish:
+    post:
+      tags: [Content Admin]
+      summary: Atomically publish reviewed prerequisite edges after cycle detection
+      parameters:
+        - $ref: '#/components/parameters/BatchId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateKnowledgeEdgePublicationBatchRequest'}
+      responses:
+        '200':
+          description: Published edge batch
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/KnowledgeEdgePublicationBatch'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    IdempotencyKey:
+      in: header
+      name: Idempotency-Key
+      required: true
+      schema: {type: string, minLength: 8, maxLength: 128}
+    SubmissionId:
+      in: path
+      name: submissionId
+      required: true
+      schema: {type: string}
+    CandidateId:
+      in: path
+      name: candidateId
+      required: true
+      schema: {type: string}
+    VersionId:
+      in: path
+      name: versionId
+      required: true
+      schema: {type: string}
+    BatchId:
+      in: path
+      name: batchId
+      required: true
+      schema: {type: string}
+    KnowledgePointId:
+      in: path
+      name: knowledgePointId
+      required: true
+      schema: {type: string}
+  responses:
+    NotFound:
+      description: Resource not found or not visible to this caller
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    Forbidden:
+      description: Caller lacks the required role
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    Conflict:
+      description: State or idempotency conflict
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    Unprocessable:
+      description: Request is valid JSON but violates release or evaluation rules
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+  schemas:
+    StudentOption:
+      type: object
+      additionalProperties: false
+      required: [key, text, sortOrder]
+      properties:
+        key: {type: string}
+        text: {type: string}
+        sortOrder: {type: integer}
+    StudentQuestion:
+      type: object
+      additionalProperties: false
+      required: [assignmentId, questionId, versionId, locale, fallbackUsed, stem, options, knowledgePointIds, source, expiresAt]
+      properties:
+        assignmentId: {type: string}
+        questionId: {type: string}
+        versionId: {type: string}
+        locale: {type: string, enum: [en, zh-CN]}
+        fallbackUsed: {type: boolean}
+        title: {type: [string, 'null']}
+        stem: {type: string}
+        options:
+          type: array
+          minItems: 2
+          items: {$ref: '#/components/schemas/StudentOption'}
+        knowledgePointIds:
+          type: array
+          minItems: 1
+          items: {type: string}
+        source:
+          type: object
+          additionalProperties: false
+          required: [sourceId, url]
+          properties:
+            sourceId: {type: string}
+            url: {type: [string, 'null'], format: uri}
+        selection:
+          $ref: '#/components/schemas/AlgorithmDecision'
+        expiresAt: {type: string, format: date-time}
+    CreateAssessmentAssignmentRequest:
+      type: object
+      additionalProperties: false
+      required: [mode]
+      properties:
+        knowledgePointId: {type: [string, 'null']}
+        diagnosticId: {type: [string, 'null']}
+        locale: {type: string, enum: [en, zh-CN], default: en}
+        mode:
+          type: string
+          enum: [diagnostic, guided_practice, independent, retrieval, remediation, challenge]
+        excludeSeenWithinDays: {type: integer, minimum: 0, default: 7}
+    AlgorithmDecision:
+      type: object
+      additionalProperties: false
+      required: [algorithm, version, reasonCodes]
+      properties:
+        algorithm: {type: string}
+        version: {type: string}
+        reasonCodes:
+          type: array
+          items: {type: string}
+    QuizSubmissionRequest:
+      type: object
+      additionalProperties: false
+      required: [assignmentId, versionId, selectedOptionKey]
+      properties:
+        assignmentId: {type: string}
+        versionId: {type: string}
+        selectedOptionKey: {type: string}
+        responseTimeMs: {type: integer, minimum: 0}
+        hintCount: {type: integer, minimum: 0, default: 0}
+    EvaluationResult:
+      type: object
+      additionalProperties: false
+      required: [score, isPassed, confidence, reasonCodes, evaluatorName, evaluatorVersion]
+      properties:
+        score: {type: number, minimum: 0, maximum: 1}
+        isPassed: {type: boolean}
+        confidence: {type: number, minimum: 0, maximum: 1}
+        reasonCodes:
+          type: array
+          items: {type: string}
+        feedback: {type: object, additionalProperties: true}
+        evaluatorName: {type: string}
+        evaluatorVersion: {type: string}
+    QuizSubmissionResponse:
+      type: object
+      additionalProperties: false
+      required: [submissionId, status]
+      properties:
+        submissionId: {type: string}
+        status:
+          type: string
+          enum: [queued, running, completed, failed, needs_human_review]
+        result:
+          oneOf:
+            - {$ref: '#/components/schemas/EvaluationResult'}
+            - {type: 'null'}
+        explanation:
+          description: Present only after completed scoring and only when a published explanation exists.
+          oneOf:
+            - {$ref: '#/components/schemas/QuizExplanation'}
+            - {type: 'null'}
+    QuizExplanation:
+      type: object
+      additionalProperties: false
+      required: [locale, fallbackUsed, summary, correctReason, optionReasons, memoryTip, sourceUrls]
+      properties:
+        locale: {type: string, enum: [en, zh-CN]}
+        fallbackUsed: {type: boolean}
+        summary: {type: string}
+        correctReason: {type: string}
+        optionReasons:
+          type: object
+          additionalProperties: {type: string}
+        memoryTip: {type: string}
+        sourceUrls:
+          type: array
+          items: {type: string, format: uri}
+    ReadinessStatus:
+      type: string
+      enum: [BLOCKED_SOURCE, BLOCKED_ANSWER, BLOCKED_CORRECT_OPTION_COUNT, BLOCKED_TARGET_MAPPING, BLOCKED_REVIEW, BLOCKED_EXACT_EVALUATION, READY]
+    ReviewQueueItem:
+      type: object
+      required: [questionId, versionId, sourceId, stem, readinessStatus]
+      properties:
+        questionId: {type: string}
+        versionId: {type: string}
+        sourceId: {type: string}
+        sourceUrl: {type: [string, 'null'], format: uri}
+        stem: {type: string}
+        answerData: {type: object, additionalProperties: true}
+        approvedTargetMappingCount: {type: integer}
+        pendingTargetMappingCount: {type: integer}
+        contentReviewApproved: {type: boolean}
+        exactEvaluationPublished: {type: boolean}
+        blockerCodes:
+          type: array
+          items: {$ref: '#/components/schemas/ReadinessStatus'}
+        readinessStatus: {$ref: '#/components/schemas/ReadinessStatus'}
+    MappingDecisionRequest:
+      type: object
+      additionalProperties: false
+      required: [decision]
+      properties:
+        decision: {type: string, enum: [approved, rejected]}
+        reviewNote: {type: string, maxLength: 4000}
+    MappingDecisionResponse:
+      type: object
+      required: [candidateId, status, reviewedBy, reviewedAt]
+      properties:
+        candidateId: {type: string}
+        status: {type: string, enum: [approved, rejected]}
+        reviewedBy: {type: string}
+        reviewedAt: {type: string, format: date-time}
+    ContentReviewRequest:
+      type: object
+      additionalProperties: false
+      required: [reviewStatus, checkedAnswer, checkedMapping, checkedSource]
+      properties:
+        reviewStatus: {type: string, enum: [approved, changes_requested, rejected]}
+        checkedAnswer: {type: boolean}
+        checkedMapping: {type: boolean}
+        checkedSource: {type: boolean}
+        reviewNote: {type: string, maxLength: 4000}
+    ContentReviewResponse:
+      type: object
+      required: [reviewId, versionId, reviewStatus, reviewerId, createdAt]
+      properties:
+        reviewId: {type: string}
+        versionId: {type: string}
+        reviewStatus: {type: string}
+        reviewerId: {type: string}
+        createdAt: {type: string, format: date-time}
+    CreatePublicationBatchRequest:
+      type: object
+      additionalProperties: false
+      required: [batchName, versionIds, expectedSourceCommits]
+      properties:
+        batchName: {type: string, minLength: 1, maxLength: 200}
+        versionIds:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: {type: string}
+        expectedSourceCommits:
+          type: object
+          additionalProperties: {type: string}
+    LocalizationReviewRequest:
+      type: object
+      additionalProperties: false
+      required: [locale, translationReviewStatus, explanationReviewStatus, checkedStem, checkedOptions, checkedExplanation]
+      properties:
+        locale: {type: string, enum: [zh-CN]}
+        translationReviewStatus: {type: string, enum: [approved, changes_requested, rejected]}
+        explanationReviewStatus: {type: string, enum: [approved, changes_requested, rejected]}
+        checkedStem: {type: boolean}
+        checkedOptions: {type: boolean}
+        checkedExplanation: {type: boolean}
+        reviewNote: {type: string, maxLength: 4000}
+    LocalizationReviewResponse:
+      type: object
+      required: [reviewId, versionId, locale, translationReviewStatus, explanationReviewStatus, reviewerId, createdAt]
+      properties:
+        reviewId: {type: string}
+        versionId: {type: string}
+        locale: {type: string}
+        translationReviewStatus: {type: string}
+        explanationReviewStatus: {type: string}
+        reviewerId: {type: string}
+        createdAt: {type: string, format: date-time}
+    CreateLocalizationPublicationBatchRequest:
+      type: object
+      additionalProperties: false
+      required: [batchName, locale, versionIds]
+      properties:
+        batchName: {type: string, minLength: 1, maxLength: 200}
+        locale: {type: string, enum: [zh-CN]}
+        versionIds:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: {type: string}
+    PublicationBatchItem:
+      type: object
+      required: [versionId, publishStatus, blockerCodes]
+      properties:
+        versionId: {type: string}
+        publishStatus: {type: string, enum: [pending, ready, published, blocked, failed]}
+        blockerCodes:
+          type: array
+          items: {type: string}
+    PublicationBatch:
+      type: object
+      required: [batchId, batchName, status, items]
+      properties:
+        batchId: {type: string}
+        batchName: {type: string}
+        status: {type: string, enum: [draft, validated, published, failed, cancelled]}
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/PublicationBatchItem'}
+        createdAt: {type: string, format: date-time}
+        publishedAt: {type: [string, 'null'], format: date-time}
+    MasteryLevel:
+      type: string
+      enum: [未评测, 不会, 了解, 熟悉, 掌握]
+    MemoryStatus:
+      type: string
+      enum: [未验证, 首次验证, 延迟复测通过, 稳定保持]
+    MasteryState:
+      type: object
+      additionalProperties: false
+      required: [knowledgePointId, knowledgePointName, masteryLevel, masteryScore, memoryStatus, confidence, reasonCodes, stateVersion, updatedAt]
+      properties:
+        knowledgePointId: {type: string}
+        knowledgePointName: {type: string}
+        masteryLevel: {$ref: '#/components/schemas/MasteryLevel'}
+        masteryScore: {type: number, minimum: 0, maximum: 1}
+        memoryStatus: {$ref: '#/components/schemas/MemoryStatus'}
+        memoryStabilityDays: {type: [number, 'null'], minimum: 0}
+        confidence: {type: number, minimum: 0, maximum: 1}
+        reasonCodes:
+          type: array
+          items: {type: string}
+        lastEvidenceAt: {type: [string, 'null'], format: date-time}
+        nextReviewAt: {type: [string, 'null'], format: date-time}
+        stateVersion: {type: integer, minimum: 1}
+        updatedAt: {type: string, format: date-time}
+    MasteryHistoryEntry:
+      type: object
+      additionalProperties: false
+      required: [historyId, knowledgePointId, newMasteryLevel, newMasteryScore, newMemoryStatus, reasonCodes, algorithm, algorithmVersion, stateVersion, createdAt]
+      properties:
+        historyId: {type: string}
+        knowledgePointId: {type: string}
+        knowledgePointName: {type: string}
+        previousMasteryLevel:
+          oneOf:
+            - {$ref: '#/components/schemas/MasteryLevel'}
+            - {type: 'null'}
+        newMasteryLevel: {$ref: '#/components/schemas/MasteryLevel'}
+        previousMasteryScore: {type: [number, 'null'], minimum: 0, maximum: 1}
+        newMasteryScore: {type: number, minimum: 0, maximum: 1}
+        previousMemoryStatus:
+          oneOf:
+            - {$ref: '#/components/schemas/MemoryStatus'}
+            - {type: 'null'}
+        newMemoryStatus: {$ref: '#/components/schemas/MemoryStatus'}
+        memoryStabilityDays: {type: [number, 'null'], minimum: 0}
+        confidence: {type: [number, 'null'], minimum: 0, maximum: 1}
+        reasonCodes:
+          type: array
+          items: {type: string}
+        algorithm: {type: string}
+        algorithmVersion: {type: string}
+        stateVersion: {type: integer, minimum: 1}
+        nextReviewAt: {type: [string, 'null'], format: date-time}
+        createdAt: {type: string, format: date-time}
+    MasteryEvidence:
+      type: object
+      additionalProperties: false
+      required: [evidenceId, userId, knowledgePointId, evidenceStrength, taskMode, score, hintCount, retryCount, isIndependent, isDelayedRetrieval, occurredAt]
+      properties:
+        evidenceId: {type: string}
+        userId: {type: string}
+        knowledgePointId: {type: string}
+        versionId: {type: [string, 'null']}
+        evidenceStrength: {type: string, enum: [direct, strong, auxiliary]}
+        taskMode: {type: string, enum: [diagnostic, guided_practice, independent, retrieval, remediation, challenge]}
+        score: {type: number, minimum: 0, maximum: 1}
+        isCorrect: {type: [boolean, 'null']}
+        responseTimeMs: {type: [integer, 'null'], minimum: 0}
+        hintCount: {type: integer, minimum: 0}
+        retryCount: {type: integer, minimum: 0}
+        isIndependent: {type: boolean}
+        isDelayedRetrieval: {type: boolean}
+        scheduledIntervalDays: {type: [number, 'null'], minimum: 0}
+        occurredAt: {type: string, format: date-time}
+        processedAt: {type: [string, 'null'], format: date-time}
+    ApplyMasteryUpdateRequest:
+      type: object
+      additionalProperties: false
+      required: [updateId, userId, knowledgePointId, expectedStateVersion, update]
+      properties:
+        updateId: {type: string}
+        userId: {type: string}
+        knowledgePointId: {type: string}
+        expectedStateVersion: {type: integer, minimum: 0}
+        update:
+          type: object
+          additionalProperties: false
+          required: [masteryLevel, masteryScore, memoryStatus, memoryStabilityDays, confidence, evidenceIds, evidenceSummary, reasonCodes, algorithmName, algorithmVersion, nextReviewAt]
+          properties:
+            masteryLevel: {$ref: '#/components/schemas/MasteryLevel'}
+            masteryScore: {type: number, minimum: 0, maximum: 1}
+            memoryStatus: {$ref: '#/components/schemas/MemoryStatus'}
+            memoryStabilityDays: {type: number, minimum: 0}
+            confidence: {type: number, minimum: 0, maximum: 1}
+            evidenceIds:
+              type: array
+              minItems: 1
+              uniqueItems: true
+              items: {type: string}
+            evidenceSummary: {type: object, additionalProperties: true}
+            reasonCodes:
+              type: array
+              items: {type: string}
+            algorithmName: {type: string}
+            algorithmVersion: {type: string}
+            nextReviewAt: {type: string, format: date-time}
+    ApplyMasteryUpdateResponse:
+      type: object
+      additionalProperties: false
+      required: [updateId, userId, knowledgePointId, stateVersion, idempotentReplay]
+      properties:
+        updateId: {type: string}
+        userId: {type: string}
+        knowledgePointId: {type: string}
+        stateVersion: {type: integer, minimum: 1}
+        idempotentReplay: {type: boolean}
+    PrerequisiteEdge:
+      type: object
+      additionalProperties: false
+      required: [fromKnowledgePointId, toKnowledgePointId, relationType, weight]
+      properties:
+        fromKnowledgePointId: {type: string}
+        fromKnowledgePointName: {type: string}
+        toKnowledgePointId: {type: string}
+        toKnowledgePointName: {type: string}
+        relationType: {type: string, enum: [prerequisite]}
+        weight: {type: number, minimum: 0}
+    KnowledgeEdgeDecisionRequest:
+      type: object
+      additionalProperties: false
+      required: [decision, checkedDirection]
+      properties:
+        decision: {type: string, enum: [approved, changes_requested, rejected]}
+        checkedDirection: {type: boolean}
+        reviewNote: {type: string, maxLength: 4000}
+    KnowledgeEdgeDecisionResponse:
+      type: object
+      additionalProperties: false
+      required: [reviewId, candidateId, decision, reviewerId, createdAt]
+      properties:
+        reviewId: {type: string}
+        candidateId: {type: string}
+        decision: {type: string, enum: [approved, changes_requested, rejected]}
+        reviewerId: {type: string}
+        createdAt: {type: string, format: date-time}
+    CreateKnowledgeEdgePublicationBatchRequest:
+      type: object
+      additionalProperties: false
+      required: [batchName, candidateIds]
+      properties:
+        batchName: {type: string, minLength: 1, maxLength: 200}
+        candidateIds:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: {type: string}
+    KnowledgeEdgePublicationBatch:
+      type: object
+      additionalProperties: false
+      required: [batchId, batchName, status, publishedCount, publishedAt]
+      properties:
+        batchId: {type: string}
+        batchName: {type: string}
+        status: {type: string, enum: [published]}
+        publishedCount: {type: integer, minimum: 1}
+        publishedAt: {type: string, format: date-time}
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, requestId]
+          properties:
+            code: {type: string}
+            message: {type: string}
+            requestId: {type: string}
+            details: {type: object, additionalProperties: true}

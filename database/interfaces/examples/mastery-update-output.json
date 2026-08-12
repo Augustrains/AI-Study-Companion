@@ -1,0 +1,26 @@
+{
+  "masteryLevel": "掌握",
+  "masteryScore": 0.8697,
+  "memoryStatus": "延迟复测通过",
+  "memoryStabilityDays": 4.0,
+  "confidence": 0.6713,
+  "evidenceIds": [
+    "evidence-example-delayed-01"
+  ],
+  "evidenceSummary": {
+    "acceptedEvidenceCount": 5,
+    "effectiveEvidenceWeight": 4.45,
+    "independentCorrectCount": 3,
+    "delayedCorrectCount": 1,
+    "delayedFailureCount": 0,
+    "guidedEvidenceCount": 1
+  },
+  "reasonCodes": [
+    "DELAYED_RETRIEVAL_SUCCESS",
+    "INDEPENDENT_SUCCESS",
+    "MASTERY_GATE_SATISFIED"
+  ],
+  "algorithmName": "explainable-mastery-rules",
+  "algorithmVersion": "1.0.0",
+  "nextReviewAt": "2026-08-16T00:00:00+00:00"
+}

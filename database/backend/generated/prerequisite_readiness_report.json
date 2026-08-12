@@ -1,0 +1,14 @@
+{
+  "valid": true,
+  "candidate_count": 48,
+  "decision_counts": {
+    "approved": 0,
+    "changes_requested": 0,
+    "pending": 48,
+    "rejected": 0
+  },
+  "approved_graph_acyclic": true,
+  "ready_to_publish_count": 0,
+  "errors": [],
+  "note": "只有人工标记 approved 且填写 reviewer_id 的边才会进入发布包。"
+}

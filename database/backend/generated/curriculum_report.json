@@ -1,0 +1,83 @@
+{
+  "schema_version": "learning-item-catalog.v1",
+  "items_total": 423,
+  "status_counts": {
+    "needs_review": 423
+  },
+  "item_type_counts": {
+    "concept_check": 3,
+    "coding_task": 2,
+    "project_task": 35,
+    "notebook_lab": 82,
+    "quiz_question": 301
+  },
+  "formal_quiz_candidates": 301,
+  "practice_task_candidates": 122,
+  "repo_reports": [
+    {
+      "source_id": "microsoft-ml-for-beginners",
+      "repository_name": "ML-For-Beginners",
+      "commit_sha": "d0d0ea2b2d22cddca31f9c6d108df7daa87a1b46",
+      "files_scanned": 87,
+      "files_with_items": 47,
+      "files_without_items": 40,
+      "items_extracted": 203,
+      "item_types": {
+        "concept_check": 3,
+        "coding_task": 2,
+        "project_task": 28,
+        "notebook_lab": 14,
+        "quiz_question": 156
+      },
+      "knowledge_candidates": {
+        "fairness": 6,
+        "regression": 17,
+        "logistic-regression": 3,
+        "classification": 15,
+        "clustering": 10,
+        "time-series": 12,
+        "reinforcement-learning": 4,
+        "q-learning": 6,
+        "neural-networks": 1,
+        "deep-learning": 2,
+        "pytorch": 1,
+        "linear-regression": 2
+      },
+      "errors": []
+    },
+    {
+      "source_id": "microsoft-ai-for-beginners",
+      "repository_name": "AI-For-Beginners",
+      "commit_sha": "33e781bf7bfb9b39fd27c4e4a3e592669b52cb4b",
+      "files_scanned": 130,
+      "files_with_items": 99,
+      "files_without_items": 31,
+      "items_extracted": 220,
+      "item_types": {
+        "quiz_question": 145,
+        "notebook_lab": 68,
+        "project_task": 7
+      },
+      "knowledge_candidates": {
+        "neural-networks": 43,
+        "transformers": 9,
+        "reinforcement-learning": 3,
+        "fairness": 1,
+        "regression": 4,
+        "classification": 36,
+        "overfitting": 7,
+        "pytorch": 24,
+        "tensorflow": 21,
+        "computer-vision": 9,
+        "deep-learning": 5,
+        "cnn": 6,
+        "linear-regression": 1,
+        "nlp": 2,
+        "q-learning": 1
+      },
+      "errors": []
+    }
+  ],
+  "source_policy": "Only ML-For-Beginners and AI-For-Beginners are accepted.",
+  "publish_policy": "Only reviewed/approved items may be published; imported items remain needs_review."
+}

@@ -1,0 +1,21 @@
+{
+  "valid": true,
+  "quiz_count": 301,
+  "review_row_count": 301,
+  "ready_to_publish_count": 0,
+  "review_counts": {
+    "mapping": {
+      "pending": 301
+    },
+    "answer": {
+      "pending": 301
+    },
+    "source": {
+      "pending": 301
+    },
+    "decision": {
+      "hold": 301
+    }
+  },
+  "errors": []
+}
