@@ -1,0 +1,28 @@
+section_id,book_id,chapter_id,content_unit_id,section_order,section_title,source_relative_path,source_anchor,status
+sec-ml-001,ml-001,ch-ml-01,ml-unit-001,1,机器学习概览,open-machine-learning-jupyter-book/ml-fundamentals/ml-overview.ipynb,https://press.ocademy.cc/ml-fundamentals/ml-overview.html,active
+sec-ml-002,ml-001,ch-ml-01,ml-unit-002,2,机器学习技术与任务,open-machine-learning-jupyter-book/ml-fundamentals/ml-summary.ipynb,https://press.ocademy.cc/ml-fundamentals/ml-summary.html,active
+sec-ml-003,ml-001,ch-ml-02,ml-unit-003,1,回归模型,open-machine-learning-jupyter-book/ml-fundamentals/regression/regression-models-for-machine-learning.ipynb,https://press.ocademy.cc/ml-fundamentals/regression/regression-models-for-machine-learning.html,active
+sec-ml-004,ml-001,ch-ml-02,ml-unit-004,2,线性与多项式回归,open-machine-learning-jupyter-book/ml-fundamentals/regression/linear-and-polynomial-regression.ipynb,https://press.ocademy.cc/ml-fundamentals/regression/linear-and-polynomial-regression.html,active
+sec-ml-005,ml-001,ch-ml-02,ml-unit-005,3,逻辑回归,open-machine-learning-jupyter-book/ml-fundamentals/regression/logistic-regression.ipynb,https://press.ocademy.cc/ml-fundamentals/regression/logistic-regression.html,active
+sec-ml-006,ml-001,ch-ml-02,ml-unit-006,4,损失函数,open-machine-learning-jupyter-book/ml-fundamentals/parameter-optimization/loss-function.ipynb,https://press.ocademy.cc/ml-fundamentals/parameter-optimization/loss-function.html,active
+sec-ml-007,ml-001,ch-ml-02,ml-unit-007,5,梯度下降,open-machine-learning-jupyter-book/ml-fundamentals/parameter-optimization/gradient-descent.ipynb,https://press.ocademy.cc/ml-fundamentals/parameter-optimization/gradient-descent.html,active
+sec-ml-008,ml-001,ch-ml-03,ml-unit-008,1,分类入门,open-machine-learning-jupyter-book/ml-fundamentals/classification/getting-started-with-classification.ipynb,https://press.ocademy.cc/ml-fundamentals/classification/getting-started-with-classification.html,active
+sec-ml-009,ml-001,ch-ml-04,ml-unit-009,1,聚类模型,open-machine-learning-jupyter-book/ml-advanced/clustering/clustering-models-for-machine-learning.ipynb,https://press.ocademy.cc/ml-advanced/clustering/clustering-models-for-machine-learning.html,active
+sec-ml-010,ml-001,ch-ml-04,ml-unit-010,2,集成学习入门,open-machine-learning-jupyter-book/ml-advanced/ensemble-learning/getting-started-with-ensemble-learning.ipynb,https://press.ocademy.cc/ml-advanced/ensemble-learning/getting-started-with-ensemble-learning.html,active
+sec-ml-011,ml-001,ch-ml-05,ml-unit-011,1,模型选择,open-machine-learning-jupyter-book/ml-advanced/model-selection.ipynb,https://press.ocademy.cc/ml-advanced/model-selection.html,active
+sec-ml-012,ml-001,ch-rl-01,ml-unit-012,1,深度 Q 学习,open-machine-learning-jupyter-book/deep-learning/dqn.ipynb,https://press.ocademy.cc/deep-learning/dqn.html,active
+sec-dl-001,dl-001,ch-dl-01,dl-unit-001,1,线性代数,chapter_preliminaries/linear-algebra.md,https://zh.d2l.ai/chapter_preliminaries/linear-algebra.html,active
+sec-dl-002,dl-001,ch-dl-01,dl-unit-002,2,概率,chapter_preliminaries/probability.md,https://zh.d2l.ai/chapter_preliminaries/probability.html,active
+sec-dl-003,dl-001,ch-dl-02,dl-unit-003,1,线性回归,chapter_linear-networks/linear-regression.md,https://zh.d2l.ai/chapter_linear-networks/linear-regression.html,active
+sec-dl-004,dl-001,ch-dl-02,dl-unit-004,2,Softmax 回归,chapter_linear-networks/softmax-regression.md,https://zh.d2l.ai/chapter_linear-networks/softmax-regression.html,active
+sec-dl-005,dl-001,ch-dl-03,dl-unit-005,1,多层感知机,chapter_multilayer-perceptrons/mlp.md,https://zh.d2l.ai/chapter_multilayer-perceptrons/mlp.html,active
+sec-dl-006,dl-001,ch-dl-03,dl-unit-006,2,模型选择与过拟合,chapter_multilayer-perceptrons/underfit-overfit.md,https://zh.d2l.ai/chapter_multilayer-perceptrons/underfit-overfit.html,active
+sec-dl-007,dl-001,ch-dl-03,dl-unit-007,3,数值稳定性与初始化,chapter_multilayer-perceptrons/numerical-stability-and-init.md,https://zh.d2l.ai/chapter_multilayer-perceptrons/numerical-stability-and-init.html,active
+sec-dl-008,dl-001,ch-dl-03,dl-unit-008,4,反向传播,chapter_multilayer-perceptrons/backprop.md,https://zh.d2l.ai/chapter_multilayer-perceptrons/backprop.html,active
+sec-dl-009,dl-001,ch-dl-04,dl-unit-009,1,卷积层,chapter_convolutional-neural-networks/conv-layer.md,https://zh.d2l.ai/chapter_convolutional-neural-networks/conv-layer.html,active
+sec-dl-010,dl-001,ch-dl-04,dl-unit-010,2,填充和步幅,chapter_convolutional-neural-networks/padding-and-strides.md,https://zh.d2l.ai/chapter_convolutional-neural-networks/padding-and-strides.html,active
+sec-dl-011,dl-001,ch-dl-04,dl-unit-011,3,池化,chapter_convolutional-neural-networks/pooling.md,https://zh.d2l.ai/chapter_convolutional-neural-networks/pooling.html,active
+sec-dl-012,dl-001,ch-dl-05,dl-unit-012,1,序列模型,chapter_recurrent-neural-networks/sequence.md,https://zh.d2l.ai/chapter_recurrent-neural-networks/sequence.html,active
+sec-dl-013,dl-001,ch-dl-05,dl-unit-013,2,循环神经网络,chapter_recurrent-neural-networks/rnn.md,https://zh.d2l.ai/chapter_recurrent-neural-networks/rnn.html,active
+sec-ml-013,ml-001,ch-rl-01,ml-unit-013,2,Python 编程基础,open-machine-learning-jupyter-book/prerequisites/python-programming-basics.ipynb,https://press.ocademy.cc/prerequisites/python-programming-basics.html,active
+sec-ml-014,ml-001,ch-rl-01,ml-unit-014,3,Q 表实现,open-machine-learning-jupyter-book/deep-learning/dqn.ipynb,https://press.ocademy.cc/deep-learning/dqn.html,active

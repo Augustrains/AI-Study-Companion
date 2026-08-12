@@ -1,0 +1,12 @@
+chapter_id,book_id,chapter_order,chapter_name,source_reference,status
+ch-ml-01,ml-001,1,机器学习基础与监督学习,open-machine-learning-jupyter-book/ml-fundamentals,active
+ch-ml-02,ml-001,2,回归与优化,open-machine-learning-jupyter-book/ml-fundamentals/regression,active
+ch-ml-03,ml-001,3,分类与评估,open-machine-learning-jupyter-book/ml-fundamentals/classification,active
+ch-ml-04,ml-001,4,无监督与集成学习,open-machine-learning-jupyter-book/ml-advanced/clustering,active
+ch-ml-05,ml-001,5,模型选择与泛化,open-machine-learning-jupyter-book/ml-advanced,active
+ch-rl-01,ml-001,6,强化学习基础,open-machine-learning-jupyter-book/deep-learning,active
+ch-dl-01,dl-001,1,预备知识,chapter_preliminaries,active
+ch-dl-02,dl-001,2,线性网络,chapter_linear-networks,active
+ch-dl-03,dl-001,3,多层感知机,chapter_multilayer-perceptrons,active
+ch-dl-04,dl-001,4,卷积神经网络,chapter_convolutional-neural-networks,active
+ch-dl-05,dl-001,5,循环神经网络,chapter_recurrent-neural-networks,active

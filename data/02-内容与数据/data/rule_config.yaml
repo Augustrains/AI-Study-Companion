@@ -1,0 +1,52 @@
+rule_version: prd-v1
+
+levels:
+  - 未测评
+  - 不会
+  - 基本了解
+  - 熟悉
+  - 掌握
+
+target_levels:
+  基本了解:
+    evidence: 已通过对应知识点的正式概念题或诊断题
+  熟悉:
+    evidence: 至少两条正式证据，且含一条典型应用题并达到及格线
+  掌握:
+    evidence: 至少四条正式证据、至少三类题型、平均有效得分不低于 0.85，且通过应用题与无提示复测
+
+assessment_rules:
+  - condition: 平均有效得分低于 0.60
+    ai_level: 不会
+    reason_code: average_below_0_60
+  - condition: 一条及以上正式证据且平均有效得分不低于 0.60
+    ai_level: 基本了解
+    reason_code: basic_evidence_complete
+  - condition: 至少两条正式证据，含应用题且平均有效得分不低于 0.70
+    ai_level: 熟悉
+    reason_code: familiar_evidence_complete
+  - condition: 掌握门槛全部满足
+    ai_level: 掌握
+    reason_code: mastery_evidence_complete
+
+reason_code_dictionary:
+  no_evidence: 没有有效作答证据
+  average_below_0_60: 总体有效得分不足
+  basic_evidence_complete: 达到基本了解的最低正式证据量
+  familiar_evidence_complete: 达到熟悉的正式概念与应用证据组合
+  mastery_evidence_complete: 掌握所需证据组合完整
+  retest_passed: 无提示复测通过
+  weak_knowledge: 当前知识点状态为不会
+  unassessed_knowledge: 当前知识点尚未测评
+  target_gap: 当前生效状态未达到用户学习目标
+  weak_prerequisite: 存在未达到目标的前置知识
+  user_calibration_applied: 学习计划采用用户校准状态
+  calibration_conflict: 用户校准与 AI 判断不一致
+  retest_due: 到达建议复测时间
+  task_too_difficult: 用户反馈任务太难
+  actual_time_overrun: 实际用时明显高于预计
+
+guardrails:
+  - 完成任务不等于掌握
+  - 用户校准不覆盖 AI 判断与作答记录，但作为计划生效状态
+  - RAG 问答不自动更新掌握状态

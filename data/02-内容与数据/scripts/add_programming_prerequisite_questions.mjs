@@ -1,0 +1,33 @@
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const CONTENT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const DATA = resolve(CONTENT_ROOT, 'data');
+const SNAPSHOT = resolve(DATA, '历史快照', '2026-07-31-Python-Q表题库补充前');
+const apply = process.argv.includes('--apply');
+function parseCsv(text) { const rows=[]; let row=[]; let cell=''; let quoted=false; for(let i=0;i<text.length;i+=1){const char=text[i]; if(quoted&&char==='"'&&text[i+1]==='"'){cell+='"';i+=1;continue;} if(char==='"'){quoted=!quoted;continue;} if(!quoted&&char===','){row.push(cell);cell='';continue;} if(!quoted&&(char==='\n'||char==='\r')){if(char==='\r'&&text[i+1]==='\n')i+=1;row.push(cell);cell='';if(row.some(value=>value!==''))rows.push(row);row=[];continue;}cell+=char;} if(cell||row.length){row.push(cell);rows.push(row);} const [headers,...values]=rows; return {headers,rows:values.map(valueRow=>Object.fromEntries(headers.map((header,index)=>[header,valueRow[index]??''])))}; }
+const esc = value => { const text=String(value??''); return /[",\n]/.test(text)?`"${text.replaceAll('"','""')}"`:text; };
+const stringify = file => `${file.headers.join(',')}\n${file.rows.map(row=>file.headers.map(header=>esc(row[header])).join(',')).join('\n')}\n`;
+const load = async name => parseCsv(await readFile(resolve(DATA,name),'utf8'));
+const item = (id,kp,type,difficulty,prompt,options,correct,explanation,version) => ({question_id:id,book_id:'ml-001',topic_id:'ml-course-001',target_level:version===1?'基本了解':'掌握',question_type:type,difficulty:String(difficulty),question_summary:id.startsWith('py-')?'Python 编程基础':'Q 表实现',prompt,options_json:JSON.stringify(options),correct_option:String(correct),answer_key:options[correct],explanation,scoring_rule:'单选正确得 1 分',source_note:id.startsWith('py-')?'Open Machine Learning Book·Python 编程基础':'Open Machine Learning Book·深度 Q 学习与Q表实现',version:String(version),status:'approved'});
+const additions=[
+item('py-q01','prog-python','概念题',1,'Python 中用于按顺序保存多个奖励值的常见数据结构是？',['list 列表','float 单个浮点数','bool 布尔值'],0,'列表可以按顺序保存多个元素。',1),
+item('py-q01-v2','prog-python','代码题',2,'阅读代码 `total=0; for r in [1,2,3]: total += r`。循环结束后 total 的值是？',['3','6','9'],1,'依次累加 1、2、3 得到 6。',2),
+item('py-q01-v3','prog-python','调试题',3,'代码要累计 rewards 中的值，却写成 `for r in rewards: total = r`。应如何修改核心语句？',['`total += r`','`rewards = total`','`break`'],0,'累计时要在原 total 上加当前奖励。',3),
+item('py-q01-v4','prog-python','复测题',2,'无提示复测：若要访问列表 q_values 的第一个元素，Python 索引通常是？',['q_values[0]','q_values[1]','q_values[first]'],0,'Python 列表从 0 开始索引。',4),
+item('qt-q01','prog-qtable','概念题',1,'Q 表中的一个条目 Q(s,a) 最直接表示什么？',['在状态s采取动作a的价值估计','状态数量','神经网络层数'],0,'Q 表记录状态动作对的长期价值估计。',1),
+item('qt-q01-v2','prog-qtable','代码题',3,'伪代码 `q[s][a] += alpha * (target - q[s][a])` 中 target 通常应包含什么？',['即时奖励和折扣后的下一状态最大Q值','当前批次样本数','动作名称字符串'],0,'Q Learning 目标由奖励与折扣未来价值组成。',2),
+item('qt-q01-v3','prog-qtable','调试题',3,'终止状态更新时仍使用 `max(q[next_state])`，可能带来什么问题？',['错误加入不存在的未来回报','自动提高探索率','删除当前奖励'],0,'终止状态未来价值应设为 0。',3),
+item('qt-q01-v4','prog-qtable','复测题',2,'无提示复测：Q 表更新中的学习率 alpha 主要控制？',['新经验改变旧值的幅度','状态空间大小','动作类别名称'],0,'alpha 决定更新步长。',4)
+];
+const [bank,knowledge,abilities,sources,blueprints,preReviews]=await Promise.all(['question_bank.csv','question_knowledge_edges.csv','question_ability_edges.csv','question_source_edges.csv','question_blueprint_catalog.csv','question_pre_review.csv'].map(load));
+if(additions.some(row=>bank.rows.some(existing=>existing.question_id===row.question_id)))throw new Error('Python 或 Q 表题目已经存在，停止避免重复写入。');
+const nextBank={...bank,rows:[...bank.rows,...additions]};
+const nextKnowledge={...knowledge,rows:[...knowledge.rows,...additions.map(row=>({question_id:row.question_id,knowledge_point_id:row.question_id.startsWith('py-')?'prog-python':'prog-qtable',coverage_weight:'1.0',status:'active'}))]};
+const nextAbilities={...abilities,rows:[...abilities.rows,...additions.map(row=>({question_id:row.question_id,ability_id:'programming',coverage_weight:'1.0',status:'active'}))]};
+const nextSources={...sources,rows:[...sources.rows,...additions.map(row=>({question_id:row.question_id,content_unit_id:row.question_id.startsWith('py-')?'ml-unit-013':'ml-unit-014',source_locator:row.question_id.startsWith('py-')?'Python 变量 列表 循环':'Q 表状态动作值更新',status:'active'}))]};
+const nextBlueprints={...blueprints,rows:[...blueprints.rows,{knowledge_point_id:'prog-python',target_level:'掌握',required_question_types:'概念题|代码题|调试题|复测题',min_approved_versions:'4',current_approved_versions:'4',gap_status:'review_required',owner_action:'需由内容负责人完成Python题目人工校准。'},{knowledge_point_id:'prog-qtable',target_level:'掌握',required_question_types:'概念题|代码题|调试题|复测题',min_approved_versions:'4',current_approved_versions:'4',gap_status:'review_required',owner_action:'需由内容负责人完成Q表实现题目人工校准。'}]};
+const nextPreReviews={...preReviews,rows:[...preReviews.rows,{question_id:'py-q01',preliminary_correctness:'语义基本正确',difficulty_assessment:'基本了解-合适',mastery_evidence_assessment:'不适用-基础题',action:'保留并人工抽检',reason:'列表与循环的基础语义可用，需人工抽检干扰项',human_decision:'',human_reviewer:'',reviewed_at:'',status:'waiting_human_calibration'},{question_id:'qt-q01',preliminary_correctness:'语义基本正确',difficulty_assessment:'基本了解-合适',mastery_evidence_assessment:'不适用-基础题',action:'保留并人工抽检',reason:'Q表条目的基础定义可用，需人工抽检术语与干扰项',human_decision:'',human_reviewer:'',reviewed_at:'',status:'waiting_human_calibration'}]};
+console.log(`预览：将新增 ${additions.length} 道 Python 与 Q 表实现正式题。`);
+if(apply){await mkdir(SNAPSHOT,{recursive:true});await Promise.all([writeFile(resolve(SNAPSHOT,'question_bank.csv'),stringify(bank),'utf8'),writeFile(resolve(SNAPSHOT,'question_knowledge_edges.csv'),stringify(knowledge),'utf8'),writeFile(resolve(SNAPSHOT,'question_ability_edges.csv'),stringify(abilities),'utf8'),writeFile(resolve(SNAPSHOT,'question_source_edges.csv'),stringify(sources),'utf8'),writeFile(resolve(SNAPSHOT,'question_blueprint_catalog.csv'),stringify(blueprints),'utf8'),writeFile(resolve(SNAPSHOT,'question_pre_review.csv'),stringify(preReviews),'utf8')]);await Promise.all([writeFile(resolve(DATA,'question_bank.csv'),stringify(nextBank),'utf8'),writeFile(resolve(DATA,'question_knowledge_edges.csv'),stringify(nextKnowledge),'utf8'),writeFile(resolve(DATA,'question_ability_edges.csv'),stringify(nextAbilities),'utf8'),writeFile(resolve(DATA,'question_source_edges.csv'),stringify(nextSources),'utf8'),writeFile(resolve(DATA,'question_blueprint_catalog.csv'),stringify(nextBlueprints),'utf8'),writeFile(resolve(DATA,'question_pre_review.csv'),stringify(nextPreReviews),'utf8')]);console.log(`已写入；快照保存在 ${SNAPSHOT}`);}

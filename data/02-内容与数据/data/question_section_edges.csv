@@ -1,0 +1,151 @@
+question_id,book_id,chapter_id,section_id,content_unit_id,source_locator,tag_role,status
+ml-q01,ml-001,ch-rl-01,sec-ml-012,ml-unit-012,折扣因子与长期回报概念,direct_source,active
+ml-q02,ml-001,ch-rl-01,sec-ml-012,ml-unit-012,长期回报计算示例,direct_source,active
+ml-q03,ml-001,ch-rl-01,sec-ml-012,ml-unit-012,强化学习的状态动作奖励框架,direct_source,active
+ml-q04,ml-001,ch-rl-01,sec-ml-012,ml-unit-012,价值函数递推与动态规划,direct_source,active
+ml-q05,ml-001,ch-rl-01,sec-ml-012,ml-unit-012,Q-Learning 更新目标,direct_source,active
+ml-q06,ml-001,ch-rl-01,sec-ml-012,ml-unit-012,深度 Q 学习导言,direct_source,active
+dl-q01,dl-001,ch-dl-03,sec-dl-005,dl-unit-005,多层感知机中的神经元与激活,direct_source,active
+dl-q02,dl-001,ch-dl-03,sec-dl-005,dl-unit-005,多层感知机中的非线性,direct_source,active
+dl-q03,dl-001,ch-dl-02,sec-dl-003,dl-unit-003,线性网络的前向计算与损失,direct_source,active
+dl-q04,dl-001,ch-dl-03,sec-dl-008,dl-unit-008,反向传播,direct_source,active
+dl-q05,dl-001,ch-dl-03,sec-dl-008,dl-unit-008,训练循环与参数更新,direct_source,active
+dl-q06,dl-001,ch-dl-02,sec-dl-003,dl-unit-003,训练流程中的损失计算,direct_source,active
+ml-q07,ml-001,ch-ml-01,sec-ml-001,ml-unit-001,机器学习任务类型,direct_source,active
+ml-q08,ml-001,ch-ml-01,sec-ml-002,ml-unit-002,机器学习技术与训练范式,direct_source,active
+ml-q09,ml-001,ch-ml-02,sec-ml-003,ml-unit-003,回归任务定义,direct_source,active
+ml-q10,ml-001,ch-ml-02,sec-ml-004,ml-unit-004,线性回归模型,direct_source,active
+ml-q11,ml-001,ch-ml-02,sec-ml-005,ml-unit-005,逻辑回归,direct_source,active
+ml-q12,ml-001,ch-ml-02,sec-ml-006,ml-unit-006,损失函数,direct_source,active
+ml-q13,ml-001,ch-ml-02,sec-ml-007,ml-unit-007,梯度下降,direct_source,active
+ml-q14,ml-001,ch-ml-03,sec-ml-008,ml-unit-008,分类入门,direct_source,active
+ml-q15,ml-001,ch-ml-04,sec-ml-009,ml-unit-009,聚类模型,direct_source,active
+ml-q16,ml-001,ch-ml-04,sec-ml-010,ml-unit-010,集成学习入门,direct_source,active
+ml-q17,ml-001,ch-ml-05,sec-ml-011,ml-unit-011,模型选择,direct_source,active
+dl-q07,dl-001,ch-dl-01,sec-dl-001,dl-unit-001,线性代数,direct_source,active
+dl-q08,dl-001,ch-dl-01,sec-dl-002,dl-unit-002,概率,direct_source,active
+dl-q09,dl-001,ch-dl-02,sec-dl-003,dl-unit-003,线性回归,direct_source,active
+dl-q10,dl-001,ch-dl-02,sec-dl-004,dl-unit-004,Softmax回归,direct_source,active
+dl-q11,dl-001,ch-dl-03,sec-dl-005,dl-unit-005,多层感知机,direct_source,active
+dl-q12,dl-001,ch-dl-03,sec-dl-006,dl-unit-006,模型选择与过拟合,direct_source,active
+dl-q13,dl-001,ch-dl-03,sec-dl-007,dl-unit-007,数值稳定性与初始化,direct_source,active
+dl-q14,dl-001,ch-dl-04,sec-dl-009,dl-unit-009,卷积层,direct_source,active
+dl-q15,dl-001,ch-dl-04,sec-dl-010,dl-unit-010,填充和步幅,direct_source,active
+dl-q16,dl-001,ch-dl-04,sec-dl-011,dl-unit-011,池化,direct_source,active
+dl-q17,dl-001,ch-dl-05,sec-dl-012,dl-unit-012,序列模型,direct_source,active
+dl-q18,dl-001,ch-dl-05,sec-dl-013,dl-unit-013,循环神经网络,direct_source,active
+ml-q01-v2,ml-001,ch-rl-01,sec-ml-012,ml-unit-012,折扣因子与长期回报概念,direct_source,active
+ml-q01-v3,ml-001,ch-rl-01,sec-ml-012,ml-unit-012,折扣因子与长期回报概念,direct_source,active
+ml-q01-v4,ml-001,ch-rl-01,sec-ml-012,ml-unit-012,折扣因子与长期回报概念,direct_source,active
+ml-q02-v2,ml-001,ch-rl-01,sec-ml-012,ml-unit-012,长期回报计算示例,direct_source,active
+ml-q02-v3,ml-001,ch-rl-01,sec-ml-012,ml-unit-012,长期回报计算示例,direct_source,active
+ml-q02-v4,ml-001,ch-rl-01,sec-ml-012,ml-unit-012,长期回报计算示例,direct_source,active
+ml-q03-v2,ml-001,ch-rl-01,sec-ml-012,ml-unit-012,强化学习的状态动作奖励框架,direct_source,active
+ml-q03-v3,ml-001,ch-rl-01,sec-ml-012,ml-unit-012,强化学习的状态动作奖励框架,direct_source,active
+ml-q03-v4,ml-001,ch-rl-01,sec-ml-012,ml-unit-012,强化学习的状态动作奖励框架,direct_source,active
+ml-q04-v2,ml-001,ch-rl-01,sec-ml-012,ml-unit-012,价值函数递推与动态规划,direct_source,active
+ml-q04-v3,ml-001,ch-rl-01,sec-ml-012,ml-unit-012,价值函数递推与动态规划,direct_source,active
+ml-q04-v4,ml-001,ch-rl-01,sec-ml-012,ml-unit-012,价值函数递推与动态规划,direct_source,active
+ml-q05-v2,ml-001,ch-rl-01,sec-ml-012,ml-unit-012,Q-Learning 更新目标,direct_source,active
+ml-q05-v3,ml-001,ch-rl-01,sec-ml-012,ml-unit-012,Q-Learning 更新目标,direct_source,active
+ml-q05-v4,ml-001,ch-rl-01,sec-ml-012,ml-unit-012,Q-Learning 更新目标,direct_source,active
+ml-q06-v2,ml-001,ch-rl-01,sec-ml-012,ml-unit-012,深度 Q 学习导言,direct_source,active
+ml-q06-v3,ml-001,ch-rl-01,sec-ml-012,ml-unit-012,深度 Q 学习导言,direct_source,active
+ml-q06-v4,ml-001,ch-rl-01,sec-ml-012,ml-unit-012,深度 Q 学习导言,direct_source,active
+dl-q01-v2,dl-001,ch-dl-03,sec-dl-005,dl-unit-005,多层感知机中的神经元与激活,direct_source,active
+dl-q01-v3,dl-001,ch-dl-03,sec-dl-005,dl-unit-005,多层感知机中的神经元与激活,direct_source,active
+dl-q01-v4,dl-001,ch-dl-03,sec-dl-005,dl-unit-005,多层感知机中的神经元与激活,direct_source,active
+dl-q02-v2,dl-001,ch-dl-03,sec-dl-005,dl-unit-005,多层感知机中的非线性,direct_source,active
+dl-q02-v3,dl-001,ch-dl-03,sec-dl-005,dl-unit-005,多层感知机中的非线性,direct_source,active
+dl-q02-v4,dl-001,ch-dl-03,sec-dl-005,dl-unit-005,多层感知机中的非线性,direct_source,active
+dl-q03-v2,dl-001,ch-dl-02,sec-dl-003,dl-unit-003,线性网络的前向计算与损失,direct_source,active
+dl-q03-v3,dl-001,ch-dl-02,sec-dl-003,dl-unit-003,线性网络的前向计算与损失,direct_source,active
+dl-q03-v4,dl-001,ch-dl-02,sec-dl-003,dl-unit-003,线性网络的前向计算与损失,direct_source,active
+dl-q03-v5,dl-001,ch-dl-02,sec-dl-003,dl-unit-003,线性网络的前向计算与损失,direct_source,active
+dl-q04-v2,dl-001,ch-dl-03,sec-dl-008,dl-unit-008,反向传播,direct_source,active
+dl-q04-v3,dl-001,ch-dl-03,sec-dl-008,dl-unit-008,反向传播,direct_source,active
+dl-q04-v4,dl-001,ch-dl-03,sec-dl-008,dl-unit-008,反向传播,direct_source,active
+dl-q05-v2,dl-001,ch-dl-03,sec-dl-008,dl-unit-008,训练循环与参数更新,direct_source,active
+dl-q05-v3,dl-001,ch-dl-03,sec-dl-008,dl-unit-008,训练循环与参数更新,direct_source,active
+dl-q05-v4,dl-001,ch-dl-03,sec-dl-008,dl-unit-008,训练循环与参数更新,direct_source,active
+dl-q06-v2,dl-001,ch-dl-02,sec-dl-003,dl-unit-003,训练流程中的损失计算,direct_source,active
+dl-q06-v3,dl-001,ch-dl-02,sec-dl-003,dl-unit-003,训练流程中的损失计算,direct_source,active
+dl-q06-v4,dl-001,ch-dl-02,sec-dl-003,dl-unit-003,训练流程中的损失计算,direct_source,active
+ml-q07-v2,ml-001,ch-ml-01,sec-ml-001,ml-unit-001,机器学习任务类型,direct_source,active
+ml-q07-v3,ml-001,ch-ml-01,sec-ml-001,ml-unit-001,机器学习任务类型,direct_source,active
+ml-q07-v4,ml-001,ch-ml-01,sec-ml-001,ml-unit-001,机器学习任务类型,direct_source,active
+ml-q07-v5,ml-001,ch-ml-01,sec-ml-001,ml-unit-001,机器学习任务类型,direct_source,active
+ml-q08-v2,ml-001,ch-ml-01,sec-ml-002,ml-unit-002,机器学习技术与训练范式,direct_source,active
+ml-q08-v3,ml-001,ch-ml-01,sec-ml-002,ml-unit-002,机器学习技术与训练范式,direct_source,active
+ml-q08-v4,ml-001,ch-ml-01,sec-ml-002,ml-unit-002,机器学习技术与训练范式,direct_source,active
+ml-q09-v2,ml-001,ch-ml-02,sec-ml-003,ml-unit-003,回归任务定义,direct_source,active
+ml-q09-v3,ml-001,ch-ml-02,sec-ml-003,ml-unit-003,回归任务定义,direct_source,active
+ml-q09-v4,ml-001,ch-ml-02,sec-ml-003,ml-unit-003,回归任务定义,direct_source,active
+ml-q10-v2,ml-001,ch-ml-02,sec-ml-004,ml-unit-004,线性回归模型,direct_source,active
+ml-q10-v3,ml-001,ch-ml-02,sec-ml-004,ml-unit-004,线性回归模型,direct_source,active
+ml-q10-v4,ml-001,ch-ml-02,sec-ml-004,ml-unit-004,线性回归模型,direct_source,active
+ml-q11-v2,ml-001,ch-ml-02,sec-ml-005,ml-unit-005,逻辑回归,direct_source,active
+ml-q11-v3,ml-001,ch-ml-02,sec-ml-005,ml-unit-005,逻辑回归,direct_source,active
+ml-q11-v4,ml-001,ch-ml-02,sec-ml-005,ml-unit-005,逻辑回归,direct_source,active
+ml-q12-v2,ml-001,ch-ml-02,sec-ml-006,ml-unit-006,损失函数,direct_source,active
+ml-q12-v3,ml-001,ch-ml-02,sec-ml-006,ml-unit-006,损失函数,direct_source,active
+ml-q12-v4,ml-001,ch-ml-02,sec-ml-006,ml-unit-006,损失函数,direct_source,active
+ml-q13-v2,ml-001,ch-ml-02,sec-ml-007,ml-unit-007,梯度下降,direct_source,active
+ml-q13-v3,ml-001,ch-ml-02,sec-ml-007,ml-unit-007,梯度下降,direct_source,active
+ml-q13-v4,ml-001,ch-ml-02,sec-ml-007,ml-unit-007,梯度下降,direct_source,active
+ml-q14-v2,ml-001,ch-ml-03,sec-ml-008,ml-unit-008,分类入门,direct_source,active
+ml-q14-v3,ml-001,ch-ml-03,sec-ml-008,ml-unit-008,分类入门,direct_source,active
+ml-q14-v4,ml-001,ch-ml-03,sec-ml-008,ml-unit-008,分类入门,direct_source,active
+ml-q15-v2,ml-001,ch-ml-04,sec-ml-009,ml-unit-009,聚类模型,direct_source,active
+ml-q15-v3,ml-001,ch-ml-04,sec-ml-009,ml-unit-009,聚类模型,direct_source,active
+ml-q15-v4,ml-001,ch-ml-04,sec-ml-009,ml-unit-009,聚类模型,direct_source,active
+ml-q16-v2,ml-001,ch-ml-04,sec-ml-010,ml-unit-010,集成学习入门,direct_source,active
+ml-q16-v3,ml-001,ch-ml-04,sec-ml-010,ml-unit-010,集成学习入门,direct_source,active
+ml-q16-v4,ml-001,ch-ml-04,sec-ml-010,ml-unit-010,集成学习入门,direct_source,active
+ml-q17-v2,ml-001,ch-ml-05,sec-ml-011,ml-unit-011,模型选择,direct_source,active
+ml-q17-v3,ml-001,ch-ml-05,sec-ml-011,ml-unit-011,模型选择,direct_source,active
+ml-q17-v4,ml-001,ch-ml-05,sec-ml-011,ml-unit-011,模型选择,direct_source,active
+dl-q07-v2,dl-001,ch-dl-01,sec-dl-001,dl-unit-001,线性代数,direct_source,active
+dl-q07-v3,dl-001,ch-dl-01,sec-dl-001,dl-unit-001,线性代数,direct_source,active
+dl-q07-v4,dl-001,ch-dl-01,sec-dl-001,dl-unit-001,线性代数,direct_source,active
+dl-q08-v2,dl-001,ch-dl-01,sec-dl-002,dl-unit-002,概率,direct_source,active
+dl-q08-v3,dl-001,ch-dl-01,sec-dl-002,dl-unit-002,概率,direct_source,active
+dl-q08-v4,dl-001,ch-dl-01,sec-dl-002,dl-unit-002,概率,direct_source,active
+dl-q09-v2,dl-001,ch-dl-02,sec-dl-003,dl-unit-003,线性回归,direct_source,active
+dl-q09-v3,dl-001,ch-dl-02,sec-dl-003,dl-unit-003,线性回归,direct_source,active
+dl-q09-v4,dl-001,ch-dl-02,sec-dl-003,dl-unit-003,线性回归,direct_source,active
+dl-q10-v2,dl-001,ch-dl-02,sec-dl-004,dl-unit-004,Softmax回归,direct_source,active
+dl-q10-v3,dl-001,ch-dl-02,sec-dl-004,dl-unit-004,Softmax回归,direct_source,active
+dl-q10-v4,dl-001,ch-dl-02,sec-dl-004,dl-unit-004,Softmax回归,direct_source,active
+dl-q11-v2,dl-001,ch-dl-03,sec-dl-005,dl-unit-005,多层感知机,direct_source,active
+dl-q11-v3,dl-001,ch-dl-03,sec-dl-005,dl-unit-005,多层感知机,direct_source,active
+dl-q11-v4,dl-001,ch-dl-03,sec-dl-005,dl-unit-005,多层感知机,direct_source,active
+dl-q12-v2,dl-001,ch-dl-03,sec-dl-006,dl-unit-006,模型选择与过拟合,direct_source,active
+dl-q12-v3,dl-001,ch-dl-03,sec-dl-006,dl-unit-006,模型选择与过拟合,direct_source,active
+dl-q12-v4,dl-001,ch-dl-03,sec-dl-006,dl-unit-006,模型选择与过拟合,direct_source,active
+dl-q13-v2,dl-001,ch-dl-03,sec-dl-007,dl-unit-007,数值稳定性与初始化,direct_source,active
+dl-q13-v3,dl-001,ch-dl-03,sec-dl-007,dl-unit-007,数值稳定性与初始化,direct_source,active
+dl-q13-v4,dl-001,ch-dl-03,sec-dl-007,dl-unit-007,数值稳定性与初始化,direct_source,active
+dl-q14-v2,dl-001,ch-dl-04,sec-dl-009,dl-unit-009,卷积层,direct_source,active
+dl-q14-v3,dl-001,ch-dl-04,sec-dl-009,dl-unit-009,卷积层,direct_source,active
+dl-q14-v4,dl-001,ch-dl-04,sec-dl-009,dl-unit-009,卷积层,direct_source,active
+dl-q15-v2,dl-001,ch-dl-04,sec-dl-010,dl-unit-010,填充和步幅,direct_source,active
+dl-q15-v3,dl-001,ch-dl-04,sec-dl-010,dl-unit-010,填充和步幅,direct_source,active
+dl-q15-v4,dl-001,ch-dl-04,sec-dl-010,dl-unit-010,填充和步幅,direct_source,active
+dl-q16-v2,dl-001,ch-dl-04,sec-dl-011,dl-unit-011,池化,direct_source,active
+dl-q16-v3,dl-001,ch-dl-04,sec-dl-011,dl-unit-011,池化,direct_source,active
+dl-q16-v4,dl-001,ch-dl-04,sec-dl-011,dl-unit-011,池化,direct_source,active
+dl-q17-v2,dl-001,ch-dl-05,sec-dl-012,dl-unit-012,序列模型,direct_source,active
+dl-q17-v3,dl-001,ch-dl-05,sec-dl-012,dl-unit-012,序列模型,direct_source,active
+dl-q17-v4,dl-001,ch-dl-05,sec-dl-012,dl-unit-012,序列模型,direct_source,active
+dl-q18-v2,dl-001,ch-dl-05,sec-dl-013,dl-unit-013,循环神经网络,direct_source,active
+dl-q18-v3,dl-001,ch-dl-05,sec-dl-013,dl-unit-013,循环神经网络,direct_source,active
+dl-q18-v4,dl-001,ch-dl-05,sec-dl-013,dl-unit-013,循环神经网络,direct_source,active
+py-q01,ml-001,ch-rl-01,sec-ml-013,ml-unit-013,Python 变量 列表 循环,direct_source,active
+py-q01-v2,ml-001,ch-rl-01,sec-ml-013,ml-unit-013,Python 变量 列表 循环,direct_source,active
+py-q01-v3,ml-001,ch-rl-01,sec-ml-013,ml-unit-013,Python 变量 列表 循环,direct_source,active
+py-q01-v4,ml-001,ch-rl-01,sec-ml-013,ml-unit-013,Python 变量 列表 循环,direct_source,active
+qt-q01,ml-001,ch-rl-01,sec-ml-014,ml-unit-014,Q 表状态动作值更新,direct_source,active
+qt-q01-v2,ml-001,ch-rl-01,sec-ml-014,ml-unit-014,Q 表状态动作值更新,direct_source,active
+qt-q01-v3,ml-001,ch-rl-01,sec-ml-014,ml-unit-014,Q 表状态动作值更新,direct_source,active
+qt-q01-v4,ml-001,ch-rl-01,sec-ml-014,ml-unit-014,Q 表状态动作值更新,direct_source,active
