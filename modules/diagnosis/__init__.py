@@ -1,3 +1,3 @@
-from .module import DiagnosisModule
+from .diagnosis_workflow import DiagnosisWorkflow
 
-__all__ = ["DiagnosisModule"]
+__all__ = ["DiagnosisWorkflow"]

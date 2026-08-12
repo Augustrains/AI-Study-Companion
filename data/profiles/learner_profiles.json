@@ -1,31 +1,29 @@
 {
   "user_001": {
-    "user_id": "user_001",
-    "learning_domain": "agent",
-    "background": "学习过agent开发",
-    "self_assessed_level": "none",
-    "known_skill_ids": [
-      "llm_basics",
-      "prompt_engineering",
-      "rag",
-      "tool_calling",
-      "agent_workflow",
-      "multi_agent",
-      "Numpy"
-    ],
-    "known_skill_note": "Numpy",
-    "preferences": {
-      "activity_types": [
-        "reading"
+    "machine_learning": {
+      "created_at": "2026-08-11T09:24:42.808564+00:00",
+      "updated_at": "2026-08-11T09:24:42.808564+00:00",
+      "user_id": "user_001",
+      "learning_domain": "machine_learning",
+      "background": "了解过python",
+      "self_assessed_level": "none",
+      "known_skill_ids": [
+        "python",
+        "numpy",
+        "pandas"
       ],
-      "content_style": "balanced",
-      "difficulty": "adaptive",
-      "session_duration_minutes": 30,
-      "learning_frequency": "flexible"
-    },
-    "current_confusions": "困",
-    "additional_requirements": "希望多多学习实战技巧",
-    "created_at": "2026-08-08T09:21:34.515788+00:00",
-    "updated_at": "2026-08-08T09:21:34.515788+00:00"
+      "known_skill_note": "",
+      "preferences": {
+        "activity_types": [
+          "reading"
+        ],
+        "content_style": "balanced",
+        "difficulty": "adaptive",
+        "session_duration_minutes": 30,
+        "learning_frequency": "daily"
+      },
+      "current_confusions": "困",
+      "additional_requirements": "无其他要求"
+    }
   }
 }

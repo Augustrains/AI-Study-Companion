@@ -1,17 +1,28 @@
 export type NavKey = "today" | "diagnostic" | "plan" | "records" | "qa" | "profile";
 export type TaskStatus = "completed" | "in_progress" | "todo" | "review_due" | "skipped" | "rescheduled";
-export type BookId = "ml" | "rl";
+export type BookId = "ml" | "dl";
 
 export type Book = { id: BookId; title: string; shortTitle: string; subtitle: string };
 export type KnowledgeNode = { label: string; tone: "good" | "learning" | "weak" | "neutral"; left: string; top: string; description: string };
-export type LearningTask = { id: string; title: string; type: string; minutes: number; status: TaskStatus; reason: string; description: string };
+export type LearningTask = { id: string; title: string; type: string; minutes: number; status: TaskStatus; reason: string; description: string; learningGoal?: string; expectedCompletionDate?: string; knowledgePointIds?: string[]; abilityId?: string; chapterIds?: string[]; questionIds?: string[] };
 export type DiagnosticQuestion = { id: string; title: string; tag: string; options: Array<{ id: string; text: string }> };
-export type RecordItem = { id: string; title: string; description: string; time: string; tone: string; category: "task" | "diagnostic" | "qa"; icon: "check" | "target" | "chat" | "calendar" };
-export type Source = { id: string; type: string; title: string; location: string; excerpt: string };
+export type RecordItem = { id: string; title: string; description: string; time: string; tone: string; category: "profile" | "task" | "diagnostic" | "qa"; icon: "check" | "target" | "chat" | "calendar" };
+export type Source = {
+  id: string;
+  type: string;
+  title: string;
+  location: string;
+  excerpt: string;
+  chapterId?: string;
+  sectionId?: string;
+  contentUnitId?: string;
+  knowledgePointIds?: string[];
+  bookId?: string;
+};
 
 export const books: Book[] = [
   { id: "ml", title: "《机器学习》", shortTitle: "机器学习", subtitle: "监督学习与模型评估" },
-  { id: "rl", title: "《强化学习》", shortTitle: "强化学习", subtitle: "状态、动作与价值函数" },
+  { id: "dl", title: "《深度学习》", shortTitle: "深度学习", subtitle: "神经网络、训练与泛化" },
 ];
 
 type BookContent = {
@@ -74,51 +85,51 @@ const machineLearning: BookContent = {
   qaAnswer: "可以比较训练集和验证集的表现：如果训练误差持续降低，而验证误差开始升高，通常说明模型正在过拟合。可以结合正则化、交叉验证或减少模型复杂度来改善。",
 };
 
-const reinforcementLearning: BookContent = {
-  goal: "掌握强化学习基础",
-  recommendation: { title: "理解 Q 学习更新", minutes: 20, difficulty: "中等", reason: "最近诊断显示你在状态价值和动作价值的区分上正确率为 58%，先理解 Q 学习更新，有助于建立从经验到策略的完整闭环。" },
-  lastLearned: "马尔可夫决策过程",
+const deepLearning: BookContent = {
+  goal: "掌握深度学习基础",
+  recommendation: { title: "理解反向传播与优化", minutes: 20, difficulty: "中等", reason: "最近诊断显示你需要加强神经网络训练、反向传播和泛化之间关系的理解。" },
+  lastLearned: "神经网络基础",
   nodes: [
-    { label: "状态与动作", tone: "good", left: "8%", top: "17%", description: "描述环境当前情况和可采取的行为。" },
-    { label: "奖励函数", tone: "good", left: "67%", top: "17%", description: "定义智能体希望最大化的反馈。" },
-    { label: "价值函数", tone: "weak", left: "5%", top: "49%", description: "当前重点：区分状态价值和动作价值。" },
-    { label: "Q 学习", tone: "learning", left: "72%", top: "49%", description: "通过时序差分更新动作价值。" },
-    { label: "探索与利用", tone: "learning", left: "8%", top: "78%", description: "在尝试新动作和使用已知策略间权衡。" },
-    { label: "策略梯度", tone: "neutral", left: "69%", top: "78%", description: "直接优化策略参数。" },
-    { label: "马尔可夫过程", tone: "neutral", left: "41%", top: "88%", description: "用状态转移描述环境动态。" },
+    { label: "神经网络", tone: "good", left: "8%", top: "17%", description: "理解层、参数、激活函数与输出之间的关系。" },
+    { label: "反向传播", tone: "good", left: "67%", top: "17%", description: "利用链式法则计算参数梯度。" },
+    { label: "优化与训练", tone: "weak", left: "5%", top: "49%", description: "当前重点：理解损失函数、梯度下降和学习率。" },
+    { label: "多层感知机", tone: "learning", left: "72%", top: "49%", description: "组合线性变换与非线性激活完成表示学习。" },
+    { label: "卷积网络", tone: "learning", left: "8%", top: "78%", description: "使用局部连接和参数共享处理空间结构。" },
+    { label: "正则化", tone: "neutral", left: "69%", top: "78%", description: "缓解过拟合并提升泛化能力。" },
+    { label: "泛化评估", tone: "neutral", left: "41%", top: "88%", description: "比较训练集、验证集和测试集上的表现。" },
   ],
   todayTasks: [
-    { id: "rl-t1", title: "马尔可夫决策过程", type: "视频学习", minutes: 15, status: "completed", reason: "基础内容", description: "理解状态、动作、奖励和转移概率。" },
-    { id: "rl-t2", title: "奖励与回报", type: "阅读理解", minutes: 20, status: "completed", reason: "目标关联", description: "区分即时奖励和折扣回报。" },
-    { id: "rl-t3", title: "理解 Q 学习更新", type: "能力诊断", minutes: 20, status: "in_progress", reason: "诊断薄弱点", description: "练习根据下一状态价值更新当前动作价值。" },
-    { id: "rl-t4", title: "探索与利用练习", type: "例题练习", minutes: 20, status: "todo", reason: "前置知识", description: "比较贪心策略和 ε-贪心策略。" },
-    { id: "rl-t5", title: "强化学习闭环总结", type: "归纳总结", minutes: 15, status: "todo", reason: "目标提升", description: "整理从环境交互到策略更新的过程。" },
+    { id: "dl-t1", title: "神经网络基础", type: "视频学习", minutes: 15, status: "completed", reason: "基础内容", description: "理解层、参数、激活函数和输出。" },
+    { id: "dl-t2", title: "反向传播", type: "阅读理解", minutes: 20, status: "completed", reason: "目标关联", description: "理解链式法则和梯度计算。" },
+    { id: "dl-t3", title: "理解梯度下降更新", type: "能力诊断", minutes: 20, status: "in_progress", reason: "诊断薄弱点", description: "练习根据损失梯度更新网络参数。" },
+    { id: "dl-t4", title: "正则化与泛化练习", type: "例题练习", minutes: 20, status: "todo", reason: "前置知识", description: "比较正则化对训练误差和泛化误差的影响。" },
+    { id: "dl-t5", title: "深度学习训练闭环总结", type: "归纳总结", minutes: 15, status: "todo", reason: "目标提升", description: "整理从数据准备、模型训练到泛化评估的过程。" },
   ],
   planTasks: [
-    { id: "rl-p1", title: "马尔可夫决策过程", type: "视频学习", minutes: 15, status: "completed", reason: "基础内容", description: "理解状态、动作、奖励和转移概率。" },
-    { id: "rl-p2", title: "奖励与回报", type: "阅读理解", minutes: 20, status: "completed", reason: "目标关联", description: "区分即时奖励和折扣回报。" },
-    { id: "rl-p3", title: "理解 Q 学习更新", type: "能力诊断", minutes: 20, status: "in_progress", reason: "诊断薄弱点", description: "练习根据下一状态价值更新当前动作价值。" },
-    { id: "rl-p4", title: "探索与利用练习", type: "例题练习", minutes: 20, status: "todo", reason: "前置知识", description: "比较不同探索策略的使用场景。" },
-    { id: "rl-p5", title: "强化学习闭环总结", type: "归纳总结", minutes: 15, status: "todo", reason: "目标提升", description: "整理从环境交互到策略更新的过程。" },
+    { id: "dl-p1", title: "神经网络基础", type: "视频学习", minutes: 15, status: "completed", reason: "基础内容", description: "理解层、参数、激活函数和输出。" },
+    { id: "dl-p2", title: "反向传播", type: "阅读理解", minutes: 20, status: "completed", reason: "目标关联", description: "理解链式法则和梯度计算。" },
+    { id: "dl-p3", title: "理解梯度下降更新", type: "能力诊断", minutes: 20, status: "in_progress", reason: "诊断薄弱点", description: "练习根据损失梯度更新网络参数。" },
+    { id: "dl-p4", title: "正则化与泛化练习", type: "例题练习", minutes: 20, status: "todo", reason: "前置知识", description: "比较不同正则化方法的使用场景。" },
+    { id: "dl-p5", title: "深度学习训练闭环总结", type: "归纳总结", minutes: 15, status: "todo", reason: "目标提升", description: "整理从数据准备、模型训练到泛化评估的过程。" },
   ],
   questions: [
-    { id: "rl-q1", title: "在强化学习中，智能体根据当前状态选择动作后，环境通常会返回什么？", tag: "状态与奖励", options: [{ id: "A", text: "下一状态和奖励" }, { id: "B", text: "训练集和测试集" }, { id: "C", text: "固定的正确答案" }, { id: "D", text: "模型参数梯度" }] },
-    { id: "rl-q2", title: "Q 学习中的 Q 值主要表示什么？", tag: "价值函数", options: [{ id: "A", text: "某状态下所有动作的数量" }, { id: "B", text: "状态下采取动作并继续行动的预期回报" }, { id: "C", text: "环境的状态总数" }, { id: "D", text: "当前动作的执行时间" }] },
-    { id: "rl-q3", title: "ε-贪心策略中的随机探索主要解决什么问题？", tag: "探索与利用", options: [{ id: "A", text: "避免永远只选择当前已知最优动作" }, { id: "B", text: "让所有奖励都变成正数" }, { id: "C", text: "减少状态数量" }, { id: "D", text: "取消价值函数" }] },
+    { id: "dl-q1", title: "神经网络训练中，反向传播的主要作用是什么？", tag: "反向传播", options: [{ id: "A", text: "根据损失计算参数梯度" }, { id: "B", text: "增加训练数据数量" }, { id: "C", text: "删除隐藏层" }, { id: "D", text: "固定所有模型参数" }] },
+    { id: "dl-q2", title: "训练误差持续下降而验证误差开始上升，最可能说明什么？", tag: "泛化与过拟合", options: [{ id: "A", text: "出现过拟合" }, { id: "B", text: "学习率一定为零" }, { id: "C", text: "训练集为空" }, { id: "D", text: "模型没有参数" }] },
+    { id: "dl-q3", title: "卷积层中的参数共享主要带来什么好处？", tag: "卷积网络", options: [{ id: "A", text: "减少参数量并利用局部结构" }, { id: "B", text: "保证训练误差为零" }, { id: "C", text: "取消非线性激活" }, { id: "D", text: "不再需要验证集" }] },
   ],
   records: [
-    { id: "rl-r1", title: "完成：奖励与回报", description: "阅读理解 · 强化学习基础", time: "今天 09:42", tone: "green", category: "task", icon: "check" },
-    { id: "rl-r2", title: "诊断：价值函数", description: "正确 7/12 · 置信度中等", time: "昨天 20:16", tone: "blue", category: "diagnostic", icon: "target" },
-    { id: "rl-r3", title: "提交用户校准", description: "自评：低于判断 · Q 学习", time: "昨天 20:20", tone: "violet", category: "diagnostic", icon: "calendar" },
-    { id: "rl-r4", title: "资料问答：如何平衡探索与利用？", description: "引用 2 个资料来源", time: "2 天前", tone: "amber", category: "qa", icon: "chat" },
+    { id: "dl-r1", title: "完成：反向传播", description: "阅读理解 · 深度学习基础", time: "今天 09:42", tone: "green", category: "task", icon: "check" },
+    { id: "dl-r2", title: "诊断：模型泛化", description: "正确 7/12 · 置信度中等", time: "昨天 20:16", tone: "blue", category: "diagnostic", icon: "target" },
+    { id: "dl-r3", title: "提交用户校准", description: "自评：需要加强 · 卷积网络", time: "昨天 20:20", tone: "violet", category: "diagnostic", icon: "calendar" },
+    { id: "dl-r4", title: "资料问答：如何缓解过拟合？", description: "引用 2 个资料来源", time: "2 天前", tone: "amber", category: "qa", icon: "chat" },
   ],
   sources: [
-    { id: "rl-s1", type: "教材", title: "第 3 章 · 价值函数", location: "P.86", excerpt: "动作价值函数衡量从当前状态采取某动作后，遵循策略能够获得的预期回报。" },
-    { id: "rl-s2", type: "讲义", title: "探索与利用", location: "P.14", excerpt: "探索可以发现未知动作的潜在价值，利用则选择当前估计最优的动作。" },
+    { id: "dl-s1", type: "教材", title: "第 3 章 · 反向传播", location: "P.86", excerpt: "反向传播利用链式法则计算损失函数对各层参数的梯度。" },
+    { id: "dl-s2", type: "讲义", title: "正则化与泛化", location: "P.14", excerpt: "正则化通过约束模型复杂度降低过拟合风险并提升泛化能力。" },
   ],
-  qaQuestion: "如何平衡强化学习中的探索与利用？",
-  qaAnswer: "可以从 ε-贪心策略开始：大部分时间选择当前估计价值最高的动作，同时保留一小部分概率随机探索。随着学习推进，再逐步降低探索概率。",
+  qaQuestion: "如何缓解深度学习中的过拟合？",
+  qaAnswer: "可以结合权重正则化、数据增强、早停、Dropout 和验证集监控，根据模型在验证集上的表现选择合适的复杂度。",
 };
 
-export const bookContents: Record<BookId, BookContent> = { ml: machineLearning, rl: reinforcementLearning };
+export const bookContents: Record<BookId, BookContent> = { ml: machineLearning, dl: deepLearning };
 export const getBookContent = (bookId: BookId) => bookContents[bookId];

@@ -1,10 +1,10 @@
-import tempfile
 import unittest
 from pathlib import Path
 
-from domain.learner_profile_service import LearnerProfileService
-from repositories.learner_profile_repository import JsonLearnerProfileRepository
-from workflows.learner_profile_workflow import LearnerProfileWorkflow
+from modules.common import api as common_api
+from modules.learner_profile.workflow import JsonLearnerProfileRepository
+from modules.learner_profile.workflow import LearnerProfileWorkflow
+from tests.test_support import test_directory
 
 
 def profile_payload(background: str = " 学过 Python ") -> dict:
@@ -29,18 +29,22 @@ def profile_payload(background: str = " 学过 Python ") -> dict:
 
 class LearnerProfileWorkflowTest(unittest.TestCase):
     def build_workflow(self, directory: str) -> tuple[LearnerProfileWorkflow, JsonLearnerProfileRepository]:
-        repository = JsonLearnerProfileRepository(Path(directory) / "profiles.json")
-        return LearnerProfileWorkflow(repository, LearnerProfileService()), repository
+        repository = JsonLearnerProfileRepository(
+            common_api.json_storage.JsonContentReader(Path(directory) / "profiles.json"),
+            common_api.json_storage.JsonStore(),
+        )
+        return LearnerProfileWorkflow(repository), repository
 
     def test_profile_is_not_saved_before_confirmation(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+        with test_directory("profile-workflow-pending") as directory:
             workflow, repository = self.build_workflow(directory)
             draft = workflow.start(profile_payload())
             self.assertEqual(draft["type"], "learner_profile_review")
-            self.assertIsNone(repository.get("user_001", "machine_learning"))
+            with self.assertRaises(common_api.errors.StorageReadError):
+                repository.get("user_001", "machine_learning")
 
     def test_approve_normalizes_and_saves_profile(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+        with test_directory("profile-workflow-approve") as directory:
             workflow, repository = self.build_workflow(directory)
             draft = workflow.start(profile_payload())
             saved = workflow.review(draft["workflow_id"], action="approve")
@@ -49,7 +53,7 @@ class LearnerProfileWorkflowTest(unittest.TestCase):
             self.assertEqual(repository.get("user_001", "machine_learning").current_confusions, "过拟合")
 
     def test_edit_reprocesses_fields_and_replaces_existing_profile(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+        with test_directory("profile-workflow-edit") as directory:
             workflow, repository = self.build_workflow(directory)
             first = workflow.start(profile_payload("旧背景"))
             workflow.review(first["workflow_id"], action="approve")
@@ -59,11 +63,12 @@ class LearnerProfileWorkflowTest(unittest.TestCase):
             self.assertEqual(repository.get("user_001", "machine_learning").background, "新背景")
 
     def test_reject_does_not_save_profile(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+        with test_directory("profile-workflow-reject") as directory:
             workflow, repository = self.build_workflow(directory)
             draft = workflow.start(profile_payload())
             self.assertIsNone(workflow.review(draft["workflow_id"], action="reject"))
-            self.assertIsNone(repository.get("user_001", "machine_learning"))
+            with self.assertRaises(common_api.errors.StorageReadError):
+                repository.get("user_001", "machine_learning")
 
 
 if __name__ == "__main__":

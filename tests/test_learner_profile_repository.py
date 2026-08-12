@@ -1,23 +1,32 @@
 import json
-import tempfile
 import unittest
 from pathlib import Path
 
-from domain.learner_profile import LearnerProfile, LearningPreferences
-from repositories.learner_profile_repository import JsonLearnerProfileRepository
+from modules.common import api as common_api
+from modules.learner_profile.models import LearnerProfile, LearningPreferences
+from modules.learner_profile.workflow import JsonLearnerProfileRepository
+from tests.test_support import test_directory
 
 
 class LearnerProfileRepositoryTest(unittest.TestCase):
     def test_missing_profile_is_not_created(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            repository = JsonLearnerProfileRepository(Path(directory) / "profiles.json")
-            self.assertIsNone(repository.get("user_001"))
-            self.assertFalse(repository.exists("user_001"))
+        with test_directory("profile-repository-missing") as directory:
+            repository = JsonLearnerProfileRepository(
+                common_api.json_storage.JsonContentReader(Path(directory) / "profiles.json"),
+                common_api.json_storage.JsonStore(),
+            )
+            with self.assertRaises(common_api.errors.StorageReadError):
+                repository.get("user_001")
+            with self.assertRaises(common_api.errors.StorageReadError):
+                repository.exists("user_001")
 
     def test_profile_is_saved_and_read_back(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+        with test_directory("profile-repository-save") as directory:
             path = Path(directory) / "profiles.json"
-            repository = JsonLearnerProfileRepository(path)
+            repository = JsonLearnerProfileRepository(
+                common_api.json_storage.JsonContentReader(path),
+                common_api.json_storage.JsonStore(),
+            )
             profile = LearnerProfile(
                 user_id="user_001",
                 learning_domain="machine_learning",
@@ -38,9 +47,12 @@ class LearnerProfileRepositoryTest(unittest.TestCase):
             self.assertIn("user_001", json.loads(path.read_text(encoding="utf-8")))
 
     def test_profiles_are_independent_by_learning_domain_and_save_replaces_json(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+        with test_directory("profile-repository-domains") as directory:
             path = Path(directory) / "profiles.json"
-            repository = JsonLearnerProfileRepository(path)
+            repository = JsonLearnerProfileRepository(
+                common_api.json_storage.JsonContentReader(path),
+                common_api.json_storage.JsonStore(),
+            )
             repository.save(LearnerProfile(user_id="user_001", learning_domain="machine_learning", background="机器学习背景", known_skill_ids=["python"]))
             repository.save(LearnerProfile(user_id="user_001", learning_domain="reinforcement_learning", background="强化学习背景", known_skill_ids=["mdp"]))
 

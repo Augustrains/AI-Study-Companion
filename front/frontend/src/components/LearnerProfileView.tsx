@@ -5,12 +5,12 @@ import { Icon } from "./Icon";
 
 const domainConfig: Record<BookId, { value: string; label: string; description: string }> = {
   ml: { value: "machine_learning", label: "机器学习", description: "模型、数据与评估" },
-  rl: { value: "reinforcement_learning", label: "强化学习", description: "状态、动作、奖励与策略" },
+  dl: { value: "deep_learning", label: "深度学习", description: "神经网络、训练与泛化" },
 };
 
 const skillOptions: Record<string, Array<[string, string]>> = {
   machine_learning: [["python", "Python"], ["numpy", "NumPy"], ["pandas", "Pandas"], ["supervised_learning", "监督学习"], ["unsupervised_learning", "无监督学习"], ["model_evaluation", "模型评估"], ["deep_learning", "深度学习"]],
-  reinforcement_learning: [["python", "Python"], ["mdp", "马尔可夫决策过程"], ["reward_return", "奖励与回报"], ["value_function", "价值函数"], ["q_learning", "Q 学习"], ["exploration", "探索与利用"], ["policy_gradient", "策略梯度"]],
+  deep_learning: [["python", "Python"], ["neural_network", "神经网络基础"], ["backpropagation", "反向传播"], ["mlp", "多层感知机"], ["convolution", "卷积网络"], ["regularization", "正则化与泛化"], ["optimization", "优化与训练"]],
 };
 
 const levelOptions = [

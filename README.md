@@ -1,16 +1,6 @@
 # Study Companion
 
-一个最小可运行的自适应学习伴学 Demo。当前实现了基于 LangGraph 的诊断工作流，并在两个位置支持暂停和恢复：
-
-```text
-加载题目 → 等待用户答题 → 评分 → 生成解释 → 等待用户确认 → 保存 LearningSession
-```
-
-用户确认诊断时可以：
-
-- `approve`：接受诊断结果并保存；
-- `edit`：校准一个或多个知识点状态后保存；
-- `reject`：拒绝本次诊断，不更新学习状态。
+基于 LangGraph 和 FastAPI 的自适应学习伴学 Demo。
 
 ## 安装与运行
 
@@ -25,16 +15,17 @@ python main.py
 python -m unittest discover -s tests -v
 ```
 
-## 分层
+## 项目分层
 
 ```text
-agents/          Agent 能力，目前使用本地模板生成解释
-data/materials/  学习资料 PDF
-data/questions/  正式题库 JSON
-domain/          领域模型和确定性评分规则
-repositories/    题库、学习会话数据访问
-sdk/             LLM 等基础能力接口
-workflows/       LangGraph 状态、图定义和工作流门面
+api/                         FastAPI 应用组装和全局错误处理
+bootstrap/                   启动运行时和业务依赖组装
+modules/                     按业务模块组织 API、模型、服务、仓储和工作流
+  learner_profile/           学习者画像模块
+  diagnosis/                 诊断模块
+data/                        题库、学习材料和画像数据
+sdk/                         LLM 等基础能力接口
 ```
 
-`LearningSession` 保存长期业务状态；LangGraph Checkpointer 保存某次工作流的执行状态。当前 Demo 使用 `InMemorySaver`，生产环境应替换为数据库支持的持久化 Checkpointer。
+每个业务模块内部独立维护自己的模型、Service、Workflow、Repository 和 API，
+应用启动时由 `bootstrap` 组装，再由 `api/server.py` 注册到 FastAPI。

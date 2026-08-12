@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 *.pyo
 .pytest_cache/
+pytest-cache-files-*/
 .mypy_cache/
 .ruff_cache/
 .venv/
@@ -19,7 +20,20 @@ front/frontend/dist/
 
 # Local runtime data and temporary files
 tmp/
+.test-data/
 *.log
+
+# Generated local AI assets and runtime persistence
+models/
+data/qdrant/
+data/qdrant-bge-small-zh/
+data/learning_plan/
+data/learning_record/
+data/memory/
+
+# Upstream source repositories are large and reproducible. Keep the curated
+# catalogs and formal material units under data/02-内容与数据 instead.
+data/02-内容与数据/原始资料/
 
 # IDE and OS files
 .vscode/

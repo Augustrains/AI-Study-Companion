@@ -1,3 +1,3 @@
-from .module import LearnerProfileModule
+from .workflow import LearnerProfileWorkflow
 
-__all__ = ["LearnerProfileModule"]
+__all__ = ["LearnerProfileWorkflow"]

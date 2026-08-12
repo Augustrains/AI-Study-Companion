@@ -11,6 +11,7 @@ import uvicorn
 
 from api.server import create_app
 from bootstrap.application import build_api_dependencies
+from modules.common.config import Settings
 
 logger = logging.getLogger(__name__)
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -32,13 +33,21 @@ def start_frontend(host: str, port: int, use_real_api: bool) -> subprocess.Popen
     return subprocess.Popen(command, cwd=FRONTEND_DIR, env=environment, text=True)
 
 
-def serve_web(host: str = "127.0.0.1", backend_port: int = 8000, frontend_port: int = 5173, use_real_api: bool = True) -> int:
+
+
+def serve_web(host: str | None = None, backend_port: int | None = None, frontend_port: int | None = None, use_real_api: bool | None = None) -> int:
+    settings = Settings.from_env()
+    host = host or settings.host
+    backend_port = backend_port or settings.backend_port
+    frontend_port = frontend_port or settings.frontend_port
+    use_real_api = settings.use_real_api if use_real_api is None else use_real_api
     if not FRONTEND_DIR.is_dir():
         raise FileNotFoundError(f"前端目录不存在: {FRONTEND_DIR}")
 
+    dependencies = build_api_dependencies(settings)
     backend = uvicorn.Server(
         uvicorn.Config(
-            create_app(build_api_dependencies()),
+            create_app(dependencies),
             host=host,
             port=backend_port,
             log_level="info",
@@ -65,3 +74,4 @@ def serve_web(host: str = "127.0.0.1", backend_port: int = 8000, frontend_port: 
                 frontend.kill()
         backend.should_exit = True
         backend_thread.join(timeout=5)
+        dependencies.close()

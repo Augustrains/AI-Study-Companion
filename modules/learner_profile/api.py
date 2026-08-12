@@ -4,11 +4,13 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-from .module import LearnerProfileModule
-from .schemas import ProfileWorkflowReviewRequest
+from modules.common.errors import ValidationAppError
+
+from .schemas import ProfileWorkflowReviewRequest, ProfileWorkflowStartRequest
+from .workflow import LearnerProfileWorkflow
 
 
-def build_router(module: LearnerProfileModule) -> APIRouter:
+def build_router(module: LearnerProfileWorkflow) -> APIRouter:
     router = APIRouter(prefix="/api/learner-profile", tags=["learner-profile"])
 
     @router.get("")
@@ -17,10 +19,10 @@ def build_router(module: LearnerProfileModule) -> APIRouter:
         return {"exists": profile is not None, "profile": profile.to_dict() if profile else None}
 
     @router.post("/workflows", status_code=201)
-    def start_workflow(payload: dict[str, Any]) -> dict[str, Any]:
+    def start_workflow(payload: ProfileWorkflowStartRequest) -> dict[str, Any]:
         try:
-            draft = module.start_workflow(payload)
-        except (ValueError, TypeError) as exc:
+            draft = module.start_workflow(payload.model_dump(exclude_none=True))
+        except (ValidationAppError, ValueError, TypeError) as exc:
             raise HTTPException(status_code=400, detail={"code": "INVALID_REQUEST", "message": str(exc)}) from exc
         return {
             "workflowId": draft["workflow_id"],

@@ -1,0 +1,5 @@
+ability_id,ability_name,description,status
+math,数学能力,概率、函数与长期回报等数学基础,active
+algorithm,算法能力,动态规划、反向传播与训练流程等算法基础,active
+programming,编程能力,Python 与模型实现等实践能力,active
+conceptual,概念理解能力,能解释模型组成、原理和适用边界,active
