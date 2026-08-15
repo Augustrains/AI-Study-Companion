@@ -1,7 +1,13 @@
 import json
 
-from modules.diagnosis.models import DiagnosticSession
-from modules.diagnosis.services import DiagnosticSessionStore
+from modules.diagnosis.models import (
+    AnswerRecord,
+    AnswerResult,
+    DiagnosisResult,
+    KnowledgePointResult,
+    Question,
+)
+from modules.diagnosis.services import DiagnosisResultStore
 from modules.learning_plan.agent import LearningPlanAgent, LearningPlanAgentInput
 from modules.learning_plan.module import LearningPlanModule
 from modules.learning_plan.schemas import GenerateLearningPlanResponse
@@ -123,68 +129,60 @@ def test_agent_invalid_json_falls_back_to_deterministic_plan() -> None:
 
 def test_learning_plan_module_sends_derived_diagnosis_context_to_agent() -> None:
     client = RecordingLLMClient(
-        '{"tasks":[{"abilityId":"conceptual","title":"修复过拟合概念",'
+        '{"tasks":[{"abilityId":"knowledge:overfitting","title":"修复过拟合概念",'
         '"type":"concept_review","minutes":20,"reason":"该题回答错误",'
         '"description":"阅读关联内容并重新解释正确答案"}],"advice":["完成后进行复测。"]}'
     )
-    store = DiagnosticSessionStore()
-    session = DiagnosticSession(
-        id="diag-1",
+    store = DiagnosisResultStore()
+    question = Question(
+        id="q1",
+        title="什么现象表示过拟合？",
+        tag="overfitting",
+        knowledge_point_ids=["overfitting"],
+        chapter_id="chapter-1",
+        section_ids=["section-1"],
+        source="lessons/overfitting.md",
+        options=[
+            {"id": "A", "text": "训练误差下降"},
+            {"id": "B", "text": "训练误差下降但验证误差上升"},
+        ],
+    )
+    result = DiagnosisResult(
+        diagnosis_id="diag-1",
         user_id="user-1",
         book_id="ml-001",
         learning_goal="理解过拟合",
-        status="completed",
         calibration="higher",
         calibration_reason="我在项目中使用过这个概念，但本轮题目理解有偏差。",
-        questions=[
-            {
-                "id": "q1",
-                "title": "什么现象表示过拟合？",
-                "tag": "overfitting",
-                "knowledge_point_ids": ["overfitting"],
-                "ability_ids": ["conceptual"],
-                "chapter_id": "chapter-1",
-                "section_ids": ["section-1"],
-                "task_mode": "diagnostic",
-                "source": "lessons/overfitting.md",
-                "options": [
-                    {"id": "A", "text": "训练误差下降"},
-                    {"id": "B", "text": "训练误差下降但验证误差上升"},
-                ],
-            }
+        answer_result=AnswerResult(
+            answer_records=[
+                AnswerRecord(
+                    question=question,
+                    submitted_answer="A",
+                    correct_answer="B",
+                    is_correct=False,
+                    skipped=False,
+                )
+            ],
+            total_questions=1,
+            answered_questions=1,
+            skipped_questions=0,
+            correct_questions=0,
+            accuracy=0.0,
+            confidence="high",
+        ),
+        results=[
+            KnowledgePointResult(
+                knowledge_point_id="overfitting",
+                ai_status="不会",
+                calibrated_status="了解",
+                correct=0,
+                total=1,
+                confidence=0.22,
+            )
         ],
-        answers={"q1": "A"},
-        correct_answers={"q1": "B"},
-        result={
-            "results": [
-                {
-                    "knowledge_point_id": "overfitting",
-                    "ai_status": "不会",
-                    "calibrated_status": "了解",
-                    "correct": 0,
-                    "total": 1,
-                    "mastery_score": 0.0,
-                    "confidence": 0.22,
-                    "memory_status": "未验证",
-                    "memory_stability_days": 0.0,
-                    "next_review_at": None,
-                    "evidence_summary": {},
-                    "reason_codes": [],
-                }
-            ],
-            "answer_records": [
-                {
-                    "question_id": "q1",
-                    "submitted_answer": "A",
-                    "correct_answer": "B",
-                    "is_correct": False,
-                    "skipped": False,
-                    "knowledge_point_ids": ["overfitting"],
-                }
-            ],
-        },
     )
-    store.save(session)
+    store.save(result)
 
     with test_directory("learning-plan-agent") as directory:
         module = LearningPlanModule(

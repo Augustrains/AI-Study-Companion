@@ -1,0 +1,31 @@
+{
+  "book_id": "dl-001",
+  "book_name": "AI-For-Beginners",
+  "subject": "深度学习与 AI",
+  "knowledge_points": [
+    {"knowledge_point_id": "kp-ai-lesson-01", "name": "人工智能简介", "description": "介绍人工智能的定义、发展目标、典型应用，以及机器如何表现出类似智能的行为。"},
+    {"knowledge_point_id": "kp-ai-lesson-02", "name": "知识表示与专家系统", "description": "学习如何表示事实、规则和关系，并理解专家系统利用知识库和推理机制解决问题。"},
+    {"knowledge_point_id": "kp-ai-lesson-03", "name": "感知机", "description": "理解感知机作为基础神经元的结构、权重、偏置、激活和二分类能力。"},
+    {"knowledge_point_id": "kp-ai-lesson-04", "name": "神经网络", "description": "掌握神经网络的层、神经元、前向传播、激活函数和通过数据学习参数的基本概念。"},
+    {"knowledge_point_id": "kp-ai-lesson-05", "name": "深度学习框架", "description": "了解深度学习框架如何表示张量、模型、损失函数、梯度和训练过程。"},
+    {"knowledge_point_id": "kp-ai-lesson-06", "name": "计算机视觉简介", "description": "介绍图像数据的表示方式，以及计算机理解、分类和处理视觉内容的基本任务。"},
+    {"knowledge_point_id": "kp-ai-lesson-07", "name": "卷积神经网络", "description": "理解卷积、池化、特征图和层级特征提取，以及 CNN 在图像任务中的应用。"},
+    {"knowledge_point_id": "kp-ai-lesson-08", "name": "预训练网络与迁移学习", "description": "学习复用已有模型参数解决新任务的方法，以及迁移学习对数据量和训练成本的影响。"},
+    {"knowledge_point_id": "kp-ai-lesson-09", "name": "自编码器", "description": "理解编码器和解码器如何学习压缩与重构数据，并认识其在表示学习和异常检测中的用途。"},
+    {"knowledge_point_id": "kp-ai-lesson-10", "name": "生成对抗网络", "description": "掌握生成器与判别器相互对抗训练，从而生成与真实数据相似样本的基本思想。"},
+    {"knowledge_point_id": "kp-ai-lesson-11", "name": "目标检测", "description": "学习在图像中同时识别目标类别并定位目标边界框的方法。"},
+    {"knowledge_point_id": "kp-ai-lesson-12", "name": "图像分割", "description": "理解为图像中的像素或区域分配类别标签，从而获得更精细视觉理解的方法。"},
+    {"knowledge_point_id": "kp-ai-lesson-13", "name": "文本表示", "description": "学习将词语、句子和文档转换为数值向量，使机器学习模型能够处理文本。"},
+    {"knowledge_point_id": "kp-ai-lesson-14", "name": "词嵌入", "description": "理解通过向量空间表示词语语义和相似关系的方法。"},
+    {"knowledge_point_id": "kp-ai-lesson-15", "name": "语言建模", "description": "学习根据上下文预测词或符号的概率，并理解语言模型如何捕捉序列中的规律。"},
+    {"knowledge_point_id": "kp-ai-lesson-16", "name": "循环神经网络", "description": "理解 RNN 使用隐藏状态处理序列信息，以及其在文本和时间序列任务中的特点。"},
+    {"knowledge_point_id": "kp-ai-lesson-17", "name": "生成式网络", "description": "学习神经网络根据输入或潜在表示生成新文本、图像或其他数据的基本方法。"},
+    {"knowledge_point_id": "kp-ai-lesson-18", "name": "Transformer", "description": "掌握自注意力、序列表示和并行建模等核心思想，以及 Transformer 处理语言任务的方式。"},
+    {"knowledge_point_id": "kp-ai-lesson-19", "name": "命名实体识别", "description": "学习从文本中识别人名、地点、组织等实体，并为实体分配相应类别。"},
+    {"knowledge_point_id": "kp-ai-lesson-20", "name": "大语言模型", "description": "理解大规模预训练语言模型的训练、能力表现、使用方式及其局限。"},
+    {"knowledge_point_id": "kp-ai-lesson-21", "name": "遗传算法", "description": "学习借鉴自然选择和遗传机制，通过选择、交叉和变异搜索问题解的优化方法。"},
+    {"knowledge_point_id": "kp-ai-lesson-22", "name": "强化学习", "description": "理解智能体通过与环境交互、获得奖励并改进策略来学习行为的方法。"},
+    {"knowledge_point_id": "kp-ai-lesson-23", "name": "多智能体建模", "description": "学习多个智能体在共享环境中协作、竞争和交互时的建模与分析方法。"},
+    {"knowledge_point_id": "kp-ai-lesson-24", "name": "伦理与负责任 AI", "description": "讨论人工智能系统的公平性、透明性、隐私、安全、可解释性和社会责任。"}
+  ]
+}

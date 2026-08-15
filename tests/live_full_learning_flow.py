@@ -8,7 +8,7 @@ from pathlib import Path
 
 from modules.diagnosis.agent import DiagnosticAgent
 from modules.common.knowledge_points import JsonKnowledgePointCatalog
-from modules.diagnosis.services import AssessmentService, DiagnosticSessionStore, GeneratedQuestionBank
+from modules.diagnosis.services import AssessmentService, DiagnosisResultStore, GeneratedQuestionBank
 from modules.diagnosis.workflow import DiagnosisWorkflow
 from modules.learner_profile.models import LearnerProfile, LearningPreferences
 from modules.learning_plan.agent import LearningPlanAgent
@@ -79,11 +79,11 @@ def main() -> None:
             )
         )
         memory = MemoryModule(memory_repository)
-        sessions = DiagnosticSessionStore()
+        results = DiagnosisResultStore()
         diagnostic_client = CapturingClient(live_client())
         diagnosis = DiagnosisWorkflow(
             question_bank=GeneratedQuestionBank(PROJECT_DIR / "data" / "question_new"),
-            session_store=sessions,
+            result_store=results,
             assessment_service=AssessmentService(),
             diagnostic_agent=DiagnosticAgent(diagnostic_client),
             memory=memory,
@@ -95,24 +95,22 @@ def main() -> None:
             book_id="ml-001",
             learning_goal="理解回归数据并复习线性与多项式回归",
         )
-        session = sessions.get(started["diagnostic_id"])
-        if not session.questions:
+        questions = started["questions"]
+        if not questions:
             raise RuntimeError("live planning model selected no questions")
         print(f"question_planning_llm_calls={diagnostic_client.call_count}")
         print(f"question_planning_model_response_chars={len(diagnostic_client.last_response)}")
-        print(f"selected_questions={len(session.questions)}")
-        print(f"selected_knowledge_points={sorted({item['tag'] for item in session.questions})}")
+        print(f"selected_questions={len(questions)}")
+        print(f"selected_knowledge_points={sorted({item['tag'] for item in questions})}")
 
-        for index, question in enumerate(session.questions):
-            expected = session.correct_answers[question["id"]]
-            submitted = expected
-            if index == 0:
-                submitted = next(option["id"] for option in question["options"] if option["id"] != expected)
-            diagnosis.submit_answer(session.id, question["id"], submitted)
+        for question in questions:
+            diagnosis.submit_answer(
+                started["diagnostic_id"], question["id"], question["options"][0]["id"]
+            )
 
-        summary = asyncio.run(diagnosis.finish_diagnosis(session.id))
+        summary = asyncio.run(diagnosis.finish_diagnosis(started["diagnostic_id"]))
         diagnosis.confirm_diagnosis(
-            session.id,
+            started["diagnostic_id"],
             calibration="same",
             reason="本次结果基本符合我的实际感受。",
         )
@@ -121,14 +119,14 @@ def main() -> None:
 
         plan_client = CapturingClient(live_client())
         plan_module = LearningPlanModule(
-            sessions,
+            results,
             LearningPlanAgent(plan_client),
             path=directory / "plans.json",
             memory=memory,
             learner_profile=ProfileStub(),
         )
         plan = plan_module.generate(
-            diagnostic_id=session.id,
+            diagnostic_id=started["diagnostic_id"],
             book_id="ml",
             goal="理解回归数据并复习线性与多项式回归",
         )

@@ -70,16 +70,6 @@ class Settings:
         return self.data_dir / "memory" / "learner_memories.json"
 
     @property
-    def questions_dir(self) -> Path:
-        """返回题库目录的默认路径。"""
-        return self.data_dir / "questions"
-
-    @property
-    def content_data_dir(self) -> Path:
-        """人工维护的书籍、知识点、能力和正式题库目录。"""
-        return self.project_dir / "data" / "02-内容与数据" / "data"
-
-    @property
     def question_new_dir(self) -> Path:
         return self.data_dir / "question_new"
 

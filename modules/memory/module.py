@@ -64,8 +64,8 @@ class MemoryModule:
         from modules.diagnosis.models import STATUSES
 
         memory = self.get_learner_memory(diagnosis.user_id, diagnosis.book_id)
-        total = len(diagnosis.answer_records)
-        correct = sum(bool(item.get("is_correct")) for item in diagnosis.answer_records)
+        total = diagnosis.answer_result.total_questions
+        correct = diagnosis.answer_result.correct_questions
         memory.diagnosis_summary = {
             "diagnostic_id": diagnosis.diagnosis_id,
             "accuracy": round(correct / total * 100) if total else 0,

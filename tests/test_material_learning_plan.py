@@ -1,4 +1,4 @@
-from modules.diagnosis.services import DiagnosticSessionStore
+from modules.diagnosis.services import DiagnosisResultStore
 from modules.learning_plan.module import LearningPlanModule
 from modules.learning_plan.schemas import GenerateLearningPlanResponse, MaterialLearningPlanRequest
 from tests.test_support import test_directory
@@ -32,7 +32,7 @@ def test_material_source_creates_fixed_qa_review_task() -> None:
 
     with test_directory("material-learning-plan") as directory:
         module = LearningPlanModule(
-            DiagnosticSessionStore(),
+            DiagnosisResultStore(),
             path=directory / "plans.json",
         )
         plan = module.create_from_material(

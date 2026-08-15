@@ -1,3 +1,0 @@
-source_id,book_id,source_title,authors,language,license,license_file,origin_url,source_commit,retrieved_at,local_directory,usage_scope,status,notes
-src-ocademy-ml,ml-001,Open Machine Learning Book,Ocademy community,en,CC-BY-4.0,LICENSE-TEXT,https://github.com/ocademy-ai/machine-learning,b1a5645749b1e3ec9977693b01c662014b71cae5,2026-07-31,ocademy-machine-learning,清洗后正文可用于资料问答与学习阅读；保留署名和许可证,active,代码使用 LICENSE-CODE；不得将原始大文件直接提交到项目 Git 仓库
-src-d2l-zh,dl-001,动手学深度学习（中文版）,Aston Zhang; Zachary C Lipton; Mu Li; Alexander J Smola; D2L.ai contributors,zh,Apache-2.0,LICENSE,https://github.com/d2l-ai/d2l-zh,e6b18ccea71451a55fcd861d7b96fddf2587b09a,2026-07-31,d2l-zh,清洗后正文可用于资料问答与学习阅读；保留署名和许可证,active,macOS 大小写不敏感文件系统存在少量图片重名；正文 Markdown 可正常使用

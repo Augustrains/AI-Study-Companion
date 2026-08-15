@@ -39,7 +39,8 @@ class LearningPlanAgent:
 
     def __init__(self, llm_client: LLMClient | None = None) -> None:
         self.llm_client = llm_client or NullLLMClient()
-
+    
+    #整个类的主入口
     def build(
         self,
         agent_input: LearningPlanAgentInput,
@@ -47,7 +48,8 @@ class LearningPlanAgent:
         fallback_tasks: list[dict[str, Any]],
     ) -> dict[str, Any]:
         """Generate and validate an LLM plan, falling back on local templates."""
-
+        
+        #生成本地兜底计划
         fallback = self._fallback_plan(agent_input, fallback_tasks)
         try:
             raw_response = self.llm_client.generate(self._build_prompt(agent_input))

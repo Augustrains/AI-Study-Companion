@@ -1,7 +1,0 @@
-topic_id,book_id,topic_name,chapter_id,chapter_name,status
-ml-course-001,ml-001,机器学习第一版全书路径,ch-ml-root,机器学习,active
-dl-course-001,dl-001,深度学习第一版全书路径,ch-dl-root,深度学习,active
-rl-001,ml-001,强化学习（旧演示专题）,ch-rl-01,强化学习基础,archived
-dl-base-001,dl-001,深度学习基础（旧演示专题）,ch-dl-01,神经网络基础,archived
-ml-core-001,ml-001,机器学习基础（旧暂存专题）,ch-ml-01,机器学习基础与监督学习,archived
-dl-core-001,dl-001,深度学习核心（旧暂存专题）,ch-dl-02,深度学习核心网络,archived

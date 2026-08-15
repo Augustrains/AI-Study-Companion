@@ -6,12 +6,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-import csv
 from typing import Any
 from uuid import uuid4
 
-from modules.common.errors import ValidationAppError, WorkflowStateError
-from modules.diagnosis.services import DiagnosticSessionStore
+from modules.common.errors import ValidationAppError
+from modules.diagnosis.services import DiagnosisResultStore
 from modules.diagnosis.models import STATUSES
 from modules.common import api as common_api
 
@@ -44,9 +43,9 @@ class LearningPlanModule:
 
     DEFAULT_PATH = Path(__file__).resolve().parents[2] / "data" / "learning_plan" / "plans.json"
 
-    def __init__(self, sessions: DiagnosticSessionStore, agent: LearningPlanAgent | None = None, path: str | Path | None = None, memory: "MemoryModule | None" = None, learner_profile: "LearnerProfileWorkflow | None" = None) -> None:
+    def __init__(self, results: DiagnosisResultStore, agent: LearningPlanAgent | None = None, path: str | Path | None = None, memory: "MemoryModule | None" = None, learner_profile: "LearnerProfileWorkflow | None" = None) -> None:
         """保存诊断会话存储，并允许注入自定义计划生成代理。"""
-        self.sessions = sessions
+        self.results = results
         self.agent = agent or LearningPlanAgent()
         target = path or self.DEFAULT_PATH
         self.reader = common_api.json_storage.JsonContentReader(target)
@@ -218,35 +217,44 @@ class LearningPlanModule:
 
     def generate(self, *, diagnostic_id: str, book_id: str, goal: str) -> dict[str, Any]:
         """校验输入后，生成任务、学习建议及相关资源。"""
-        # 诊断会话是生成计划的事实来源，先按编号读取会话。
-        session = self.sessions.get(diagnostic_id)
+        diagnosis = self.results.get(diagnostic_id)
         # 兼容前端教材编号和后端题库编号，防止跨教材生成计划。
         expected_book_id = BOOK_TO_QUESTION_BANK.get(book_id, book_id)
-        if session.book_id != expected_book_id:
+        if diagnosis.book_id != expected_book_id:
             raise ValidationAppError(
                 "diagnostic session does not belong to the requested book",
                 details={"diagnostic_id": diagnostic_id, "book_id": book_id},
             )
-        # 只有完成校准且存在结果时，诊断数据才足以支撑学习计划。
-        if session.status != "completed" or session.result is None:
-            raise WorkflowStateError(
-                "learning plan requires a completed calibration",
-                details={"diagnostic_id": diagnostic_id, "session_status": session.status},
-            )
-        
+        result_payload = common_api.serialization.to_data(diagnosis)
         #从已完成的诊断会话读取用户答题结果
-        results = session.result.get("results", [])
+        results = result_payload.get("results", [])
+        answer_result = result_payload["answer_result"]
+        nested_records = answer_result["answer_records"]
+        questions = [item["question"] for item in nested_records]
+        answer_records = [
+            {
+                "question_id": item["question"]["id"],
+                "knowledge_point_ids": item["question"].get("knowledge_point_ids", []),
+                "submitted_answer": item["submitted_answer"],
+                "correct_answer": item["correct_answer"],
+                "is_correct": item["is_correct"],
+                "skipped": item["skipped"],
+                "hint_count": item["hint_count"],
+                "retry_count": item["retry_count"],
+                "is_independent": item["is_independent"],
+            }
+            for item in nested_records
+        ]
         # 诊断按知识点统计，计划按能力聚合；知识点和章节作为任务证据保留。
-        planning_units = self._build_planning_units(session.questions, session.result.get("answer_records", []), results)
+        planning_units = self._build_planning_units(questions, answer_records, results)
         #按照能力掌握排序
         ordered_results = sorted(planning_units, key=self._status_rank)
         fallback_tasks = [
             self._build_task(diagnostic_id, item, index, goal)
             for index, item in enumerate(ordered_results)
         ]
-        answer_records = session.result.get("answer_records", [])
-        question_evidence = self._build_question_evidence(session.questions, answer_records)
-        learner_preferences = self._learner_preferences(session.user_id, session.book_id)
+        question_evidence = self._build_question_evidence(questions, answer_records)
+        learner_preferences = self._learner_preferences(diagnosis.user_id, diagnosis.book_id)
         session_budget = learner_preferences.get("sessionTimeBudgetMinutes")
         agent_input = LearningPlanAgentInput(
             book=self._book(book_id),
@@ -256,10 +264,10 @@ class LearningPlanModule:
             knowledge_point_results=self._knowledge_point_contexts(results, answer_records),
             ability_units=ordered_results,
             question_evidence=question_evidence,
-            candidate_resources=self._resource_candidates(book_id, session.questions, results),
+            candidate_resources=self._resource_candidates(book_id, questions, results),
             calibration={
-                "adjustment": session.calibration,
-                "reason": session.calibration_reason,
+                "adjustment": diagnosis.calibration,
+                "reason": diagnosis.calibration_reason,
             },
             learner_preferences=learner_preferences,
             constraints={
@@ -320,24 +328,13 @@ class LearningPlanModule:
 
     @staticmethod
     def _knowledge_points_for_resources(resources: list[dict[str, Any]]) -> list[str]:
-        """Resolve source content units to knowledge points on the backend."""
-        content_unit_ids = {
-            str(item.get("contentUnitId") or item.get("content_unit_id"))
+        """Use knowledge-point metadata supplied by the active material index."""
+        points = {
+            str(point_id)
             for item in resources
-            if item.get("contentUnitId") or item.get("content_unit_id")
+            for point_id in (item.get("knowledgePointIds") or item.get("knowledge_point_ids") or [])
+            if point_id
         }
-        if not content_unit_ids:
-            return ["unknown"]
-        data_dir = Path(__file__).resolve().parents[2] / "data" / "02-内容与数据" / "data"
-        edge_path = data_dir / "content_unit_knowledge_edges.csv"
-        if not edge_path.exists():
-            return ["unknown"]
-        with edge_path.open(encoding="utf-8-sig", newline="") as handle:
-            points = {
-                row.get("knowledge_point_id", "")
-                for row in csv.DictReader(handle)
-                if row.get("content_unit_id") in content_unit_ids and row.get("knowledge_point_id")
-            }
         return sorted(points) or ["unknown"]
 
     @staticmethod

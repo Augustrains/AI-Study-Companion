@@ -8,7 +8,6 @@ from __future__ import annotations
 from typing import Any
 
 from modules.common import api as common_api
-from modules.common.errors import ValidationAppError
 
 
 def _text_fields(values: dict[str, Any], names: tuple[str, ...]) -> dict[str, Any]:
@@ -65,97 +64,3 @@ def parse_review_fields(diagnosis_id: str, calibration: str, reason: str) -> dic
             "reason": common_api.schema_validator.FieldSpec(field_type=str, nullable=False, max_length=500),
         },
     )
-
-
-# Question-bank validation rules. These belong to the diagnosis module because
-# they describe the input contract of diagnostic questions.
-OPTION_SCHEMA = {
-    "id": common_api.schema_validator.FieldSpec(
-        field_type=str, required=True, nullable=False, min_length=1,
-    ),
-    "text": common_api.schema_validator.FieldSpec(
-        field_type=str, required=True, nullable=False,
-    ),
-}
-
-QUESTION_SCHEMA = {
-    "id": common_api.schema_validator.FieldSpec(
-        field_type=str, required=True, nullable=False, min_length=1,
-    ),
-    "title": common_api.schema_validator.FieldSpec(
-        field_type=str, required=True, nullable=False, min_length=1,
-    ),
-    "tag": common_api.schema_validator.FieldSpec(
-        field_type=str, required=True, nullable=False, min_length=1,
-    ),
-    "options": common_api.schema_validator.FieldSpec(
-        field_type=list, required=True, nullable=False, item_type=dict,
-    ),
-    "correct_option_id": common_api.schema_validator.FieldSpec(
-        field_type=str, nullable=False, min_length=1,
-    ),
-    "answer": common_api.schema_validator.FieldSpec(
-        field_type=str, nullable=False,
-    ),
-    "source": common_api.schema_validator.FieldSpec(
-        field_type=str, nullable=False,
-    ),
-}
-
-QUESTION_BANK_SCHEMA = {
-    "questions": common_api.schema_validator.FieldSpec(
-        field_type=list, required=True, nullable=False, item_type=dict,
-    ),
-}
-
-
-def validate_question_bank(payload: object) -> list[dict[str, Any]]:
-    """Validate and normalize a raw question-bank payload."""
-    bank = common_api.schema_validator.validate_fields(
-        payload,
-        QUESTION_BANK_SCHEMA,
-        allow_unknown=True,
-    )
-    return [validate_question(item) for item in bank["questions"]]
-
-
-def validate_question(item: dict[str, Any]) -> dict[str, Any]:
-    """Validate one question, including option/answer relationships."""
-    normalized = dict(item)
-    normalized.setdefault("title", normalized.get("question", ""))
-    normalized.setdefault("tag", normalized.get("knowledge_point_id", ""))
-    question = common_api.schema_validator.validate_fields(
-        normalized,
-        QUESTION_SCHEMA,
-        allow_unknown=True,
-    )
-
-    options = [
-        common_api.schema_validator.validate_fields(
-            option,
-            OPTION_SCHEMA,
-            allow_unknown=True,
-        )
-        for option in question["options"]
-    ]
-    option_ids = [option["id"] for option in options]
-    if len(option_ids) != len(set(option_ids)):
-        raise ValidationAppError(
-            "question options must have unique ids",
-            details={"question_id": question["id"]},
-        )
-
-    correct_option_id = question.get("correct_option_id", "")
-    if not correct_option_id:
-        answer = question.get("answer", "")
-        correct_option_id = next(
-            (option["id"] for option in options if option["text"] == answer),
-            "",
-        )
-    if correct_option_id not in option_ids:
-        raise ValidationAppError(
-            "correct_option_id must match one of the option ids",
-            details={"resource": "question_bank", "question_id": question["id"]},
-        )
-
-    return {**question, "options": options, "correct_option_id": correct_option_id}

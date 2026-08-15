@@ -101,7 +101,10 @@ class LearningRecordModule:
                 "total_count": total_count,
                 "knowledge_point_results": result_items,
             },
-            detail={"diagnosis_id": diagnosis.diagnosis_id, "answer_records": diagnosis.answer_records},
+            detail={
+                "diagnosis_id": diagnosis.diagnosis_id,
+                "answer_records": common_api.serialization.to_data(diagnosis.answer_records),
+            },
             client_request_id=activity_id,
             source="diagnosis",
         )

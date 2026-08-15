@@ -3,7 +3,7 @@ from pathlib import Path
 
 from modules.common import api as common_api
 from modules.diagnosis.agent import DiagnosticAgent
-from modules.diagnosis.services import AssessmentService, DiagnosticSessionStore, GeneratedQuestionBank, QuestionBank
+from modules.diagnosis.services import AssessmentService, DiagnosisResultStore, GeneratedQuestionBank
 from modules.diagnosis.workflow import DiagnosisWorkflow
 from modules.learner_profile.workflow import JsonLearnerProfileRepository, LearnerProfileWorkflow
 from modules.learning_plan.module import LearningPlanModule
@@ -63,10 +63,10 @@ def build_api_dependencies(settings: common_api.config.Settings | None = None) -
     )
     question_repository = GeneratedQuestionBank(settings.question_new_dir)
     learning_record_module = LearningRecordModule()
-    session_repository = DiagnosticSessionStore()
+    result_repository = DiagnosisResultStore()
     diagnosis_workflow = DiagnosisWorkflow(
         question_bank=question_repository,
-        session_store=session_repository,
+        result_store=result_repository,
         assessment_service=AssessmentService(),
         diagnostic_agent=DiagnosticAgent(DeepSeekLLMClient.from_env()),
         memory=memory_module,
@@ -74,7 +74,7 @@ def build_api_dependencies(settings: common_api.config.Settings | None = None) -
         knowledge_point_catalog=knowledge_point_catalog,
     )
     learning_plan_module = LearningPlanModule(
-        session_repository,
+        result_repository,
         LearningPlanAgent(DeepSeekLLMClient.from_env()),
         memory=memory_module,
         learner_profile=profile_workflow,
@@ -104,14 +104,14 @@ def build_api_dependencies(settings: common_api.config.Settings | None = None) -
     )
 
 
-def build_diagnosis_workflow() -> tuple[DiagnosisWorkflow, DiagnosticSessionStore]:
-    session_repository = DiagnosticSessionStore()
+def build_diagnosis_workflow() -> tuple[DiagnosisWorkflow, DiagnosisResultStore]:
+    result_repository = DiagnosisResultStore()
     settings = common_api.config.Settings.from_env()
     workflow = DiagnosisWorkflow(
         question_bank=GeneratedQuestionBank(settings.question_new_dir),
-        session_store=session_repository,
+        result_store=result_repository,
         assessment_service=AssessmentService(),
         diagnostic_agent=DiagnosticAgent(DeepSeekLLMClient.from_env()),
         knowledge_point_catalog=common_api.knowledge_points.JsonKnowledgePointCatalog(settings.knowledge_points_dir),
     )
-    return workflow, session_repository
+    return workflow, result_repository

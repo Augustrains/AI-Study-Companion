@@ -1,14 +1,7 @@
 import json
 import unittest
-from collections import Counter
-from pathlib import Path
 
 from modules.diagnosis.agent import DiagnosticAgent, QuestionPlanningInput
-from modules.diagnosis.schemas import DiagnosticStartResponse
-from modules.diagnosis.services import QuestionBank
-
-
-PROJECT_DIR = Path(__file__).parents[1]
 
 
 class RecordingLLMClient:
@@ -141,47 +134,6 @@ class DiagnosticQuestionPlanningTest(unittest.TestCase):
         self.assertEqual([item.knowledge_point_id for item in plan], ["regression-data"])
         self.assertIn("回归数据准备与可视化", client.prompt)
         self.assertNotIn('"knowledgePointId": "classification"', client.prompt)
-
-    def test_question_bank_filters_using_agent_plan_and_returns_task_mode(self) -> None:
-        bank = QuestionBank(PROJECT_DIR / "data" / "questions")
-        question_set = bank.get_questions(
-            "machine_learning",
-            question_plan={
-                "supervised_learning": {
-                    "knowledge_point_id": "supervised_learning",
-                    "question_count": 1,
-                    "task_mode": "remediation",
-                },
-                "linear_regression": {
-                    "knowledge_point_id": "linear_regression",
-                    "question_count": 0,
-                    "task_mode": "independent",
-                },
-            },
-        )
-
-        counts = Counter(question.tag for question in question_set.questions)
-        self.assertEqual(counts, {"supervised_learning": 1})
-        self.assertEqual(question_set.questions[0].task_mode, "remediation")
-        self.assertEqual(question_set.questions[0].task_context["task_mode"], "remediation")
-        self.assertFalse(question_set.questions[0].task_context["is_delayed_retrieval"])
-
-        response = DiagnosticStartResponse.model_validate(
-            {
-                "diagnostic_id": "diag_test",
-                "questions": [
-                    {
-                        "id": question_set.questions[0].id,
-                        "title": question_set.questions[0].title,
-                        "tag": question_set.questions[0].tag,
-                        "options": [option.__dict__ for option in question_set.questions[0].options],
-                        "task_mode": question_set.questions[0].task_mode,
-                    }
-                ],
-            }
-        )
-        self.assertEqual(response.questions[0].task_mode, "remediation")
-
 
 if __name__ == "__main__":
     unittest.main()

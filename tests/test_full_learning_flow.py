@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 from modules.diagnosis.agent import DiagnosticAgent
-from modules.diagnosis.services import AssessmentService, DiagnosticSessionStore, GeneratedQuestionBank
+from modules.diagnosis.services import AssessmentService, DiagnosisResultStore, GeneratedQuestionBank
 from modules.diagnosis.workflow import DiagnosisWorkflow
 from modules.common.knowledge_points import JsonKnowledgePointCatalog
 from modules.learner_profile.models import LearnerProfile, LearningPreferences
@@ -96,11 +96,11 @@ def test_memory_to_questions_to_calibrated_ai_plan() -> None:
             )
         )
         memory = MemoryModule(memory_repository)
-        sessions = DiagnosticSessionStore()
+        results = DiagnosisResultStore()
         diagnostic_llm = DiagnosticPlanningLLM()
         diagnosis = DiagnosisWorkflow(
             question_bank=GeneratedQuestionBank(PROJECT_DIR / "data" / "question_new"),
-            session_store=sessions,
+            result_store=results,
             assessment_service=AssessmentService(),
             diagnostic_agent=DiagnosticAgent(diagnostic_llm),
             memory=memory,
@@ -116,34 +116,31 @@ def test_memory_to_questions_to_calibrated_ai_plan() -> None:
         assert '"mastery": "不会"' in diagnostic_llm.prompt
         assert '"mastery_score": 0.12' in diagnostic_llm.prompt
 
-        session = sessions.get(started["diagnostic_id"])
-        for index, question in enumerate(session.questions):
-            expected = session.correct_answers[question["id"]]
-            submitted = expected
-            if index == 0:
-                submitted = next(option["id"] for option in question["options"] if option["id"] != expected)
-            diagnosis.submit_answer(session.id, question["id"], submitted)
+        for question in started["questions"]:
+            diagnosis.submit_answer(
+                started["diagnostic_id"], question["id"], question["options"][0]["id"]
+            )
 
-        summary = asyncio.run(diagnosis.finish_diagnosis(session.id))
+        summary = asyncio.run(diagnosis.finish_diagnosis(started["diagnostic_id"]))
         assert summary["accuracy"].endswith("%")
         finalized = diagnosis.confirm_diagnosis(
-            session.id,
+            started["diagnostic_id"],
             calibration="higher",
             reason="我有实际使用经验，但第一题审题失误。",
         )
         assert finalized is not None
-        assert sessions.get(session.id).calibration_reason == "我有实际使用经验，但第一题审题失误。"
+        assert finalized.calibration_reason == "我有实际使用经验，但第一题审题失误。"
 
         plan_llm = PlanGeneratingLLM()
         plan_module = LearningPlanModule(
-            sessions,
+            results,
             LearningPlanAgent(plan_llm),
             path=directory / "plans.json",
             memory=memory,
             learner_profile=ProfileStub(),
         )
         plan = plan_module.generate(
-            diagnostic_id=session.id,
+            diagnostic_id=started["diagnostic_id"],
             book_id="ml",
             goal="理解过拟合并复习线性回归",
         )
@@ -154,4 +151,4 @@ def test_memory_to_questions_to_calibrated_ai_plan() -> None:
         assert '"sessionTimeBudgetMinutes": 15' in plan_llm.prompt
         assert '"questionEvidence"' in plan_llm.prompt
         updated_memory = memory.get_learner_memory("flow-user", "ml-001")
-        assert updated_memory.diagnosis_summary["diagnostic_id"] == session.id
+        assert updated_memory.diagnosis_summary["diagnostic_id"] == started["diagnostic_id"]
