@@ -37,12 +37,8 @@ class LearningActivityResponse(BaseModel):
     updated_at: str = Field(alias="updatedAt")
 
     book_id: str | None = Field(default=None, alias="bookId")
-    learning_goal_id: str | None = Field(default=None, alias="learningGoalId")
     plan_id: str | None = Field(default=None, alias="planId")
     task_id: str | None = Field(default=None, alias="taskId")
-    diagnostic_id: str | None = Field(default=None, alias="diagnosticId")
-    qa_conversation_id: str | None = Field(default=None, alias="qaConversationId")
-    learner_profile_id: str | None = Field(default=None, alias="learnerProfileId")
     knowledge_point_ids: list[str] = Field(default_factory=list, alias="knowledgePointIds")
 
     result: LearningActivityResultResponse = Field(default_factory=LearningActivityResultResponse)

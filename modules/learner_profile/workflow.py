@@ -18,6 +18,7 @@ if False:  # pragma: no cover
     from modules.memory.module import MemoryModule
 
 
+#读取学习者画像，保存
 class JsonLearnerProfileRepository:
     def __init__(self, reader: common_api.json_storage.JsonContentReader, store: common_api.json_storage.JsonStore) -> None:
         self.reader, self.store, self.path = reader, store, reader.path
@@ -64,11 +65,18 @@ class LearnerProfileState(TypedDict, total=False):
     saved_profile: dict[str, Any]
     status: str
 
+#使用langraph定义画像确认流程
+def build_learner_profile_graph(*, repository: JsonLearnerProfileRepository, checkpointer: Any, memory: "MemoryModule | None" = None, knowledge_point_catalog: common_api.knowledge_points.JsonKnowledgePointCatalog | None = None):
+    def catalog_ids(state: LearnerProfileState) -> list[str] | None:
+        if knowledge_point_catalog is None:
+            return None
+        return knowledge_point_catalog.ids(state["raw_profile"]["learning_domain"])
 
-def build_learner_profile_graph(*, repository: JsonLearnerProfileRepository, checkpointer: Any, memory: "MemoryModule | None" = None):
+    #规范化
     def draft(state: LearnerProfileState) -> dict[str, Any]:
-        return {"draft_profile": normalize_profile(state["raw_profile"]).to_dict(), "status": "pending_confirmation"}
-
+        return {"draft_profile": normalize_profile(state["raw_profile"], catalog_ids(state)).to_dict(), "status": "pending_confirmation"}
+    
+    #流程核心
     def review(state: LearnerProfileState) -> dict[str, Any]:
         decision = interrupt({
             "type": "learner_profile_review",
@@ -81,9 +89,11 @@ def build_learner_profile_graph(*, repository: JsonLearnerProfileRepository, che
         action = str(decision.get("action", "")).strip()
         if action not in {"approve", "edit", "reject"}:
             raise ValueError(f"unsupported profile review action: {action}")
+        
+        #处理修改内容
         corrections = decision.get("corrections") or {}
         if action == "edit":
-            revised = apply_profile_corrections(state["draft_profile"], corrections)
+            revised = apply_profile_corrections(state["draft_profile"], corrections, catalog_ids(state))
             return {"review_action": action, "corrections": corrections, "draft_profile": revised.to_dict(), "status": "approved"}
         return {"review_action": action, "corrections": {}, "status": "rejected" if action == "reject" else "approved"}
 
@@ -97,7 +107,7 @@ def build_learner_profile_graph(*, repository: JsonLearnerProfileRepository, che
     builder.add_node("draft", draft)
     builder.add_node("review", review)
     builder.add_node("commit", commit)
-    builder.add_node("reject", lambda _: {"status": "rejected"})
+    builder.add_node("reject", lambda _: {"status": "rejected"})  #拒绝节点不做任何持久化操作
     builder.add_edge(START, "draft")
     builder.add_edge("draft", "review")
     builder.add_conditional_edges("review", lambda state: "reject" if state["review_action"] == "reject" else "commit", {"commit": "commit", "reject": "reject"})
@@ -106,10 +116,15 @@ def build_learner_profile_graph(*, repository: JsonLearnerProfileRepository, che
     return builder.compile(checkpointer=checkpointer)
 
 
+#包装 LangGraph 的启动和恢复逻辑
 class LearnerProfileWorkflow:
-    def __init__(self, repository: JsonLearnerProfileRepository, checkpointer: Any | None = None, memory: "MemoryModule | None" = None) -> None:
+    def __init__(self, repository: JsonLearnerProfileRepository, checkpointer: Any | None = None, memory: "MemoryModule | None" = None, knowledge_point_catalog: common_api.knowledge_points.JsonKnowledgePointCatalog | None = None) -> None:
         self.repository = repository
-        self.graph = build_learner_profile_graph(repository=repository, checkpointer=checkpointer or InMemorySaver(), memory=memory)
+        self.knowledge_point_catalog = knowledge_point_catalog
+        self.graph = build_learner_profile_graph(repository=repository, checkpointer=checkpointer or InMemorySaver(), memory=memory, knowledge_point_catalog=knowledge_point_catalog)
+
+    def knowledge_points(self, learning_domain: str) -> list[dict[str, str]]:
+        return self.knowledge_point_catalog.as_dicts(learning_domain) if self.knowledge_point_catalog else []
 
     @staticmethod
     def _config(workflow_id: str) -> dict[str, dict[str, str]]:

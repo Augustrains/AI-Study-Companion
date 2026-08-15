@@ -69,6 +69,7 @@ class MaterialQaAgentOutput:
     """Agent 生成的一次问答结果。"""
 
     answer: str
+    refused: bool
     citations: list[MaterialQaSource]
     related_knowledge_points: list[str]
     recommended_action: str
@@ -80,6 +81,7 @@ class MaterialQaAnswer:
 
     conversation_id: str
     answer: str
+    refused: bool
     citations: list[MaterialQaSource]
     related_knowledge_points: list[str]
     recommended_action: str

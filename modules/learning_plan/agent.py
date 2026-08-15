@@ -1,110 +1,268 @@
-"""学习计划生成代理。
-
-负责把诊断阶段产生的可靠事实转换为前端可直接展示的学习计划。
-"""
+"""LLM-backed learning-plan generation with deterministic safeguards."""
 
 from __future__ import annotations
 
-from collections import defaultdict
+import json
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
+from modules.common.errors import ConfigurationError, ExternalServiceError
+from sdk.llm_client import LLMClient, NullLLMClient
+
+from .models import LEARNING_TASK_TYPES_BY_SOURCE
+
+
+@dataclass(frozen=True)
+class LearningPlanAgentInput:
+    """Verified facts and bounded choices available to the planning agent."""
+
+    book: dict[str, str]
+    goal: str
+    goal_level: str
+    diagnostic_summary: dict[str, Any]
+    knowledge_point_results: list[dict[str, Any]] = field(default_factory=list)
+    ability_units: list[dict[str, Any]] = field(default_factory=list)
+    question_evidence: list[dict[str, Any]] = field(default_factory=list)
+    candidate_resources: list[dict[str, Any]] = field(default_factory=list)
+    calibration: dict[str, Any] = field(default_factory=dict)
+    learner_preferences: dict[str, Any] = field(default_factory=dict)
+    constraints: dict[str, Any] = field(default_factory=dict)
+
 
 class LearningPlanAgent:
-    """根据诊断会话上下文生成学习建议和学习资源。
+    """Generate a plan from verified diagnosis facts.
 
-    当前实现使用确定性规则，计划决策集中在后端，前端只负责展示结果。
+    The model may choose ordering and learner-facing task wording, but backend
+    templates remain authoritative for IDs, evidence links, status and dates.
     """
 
-    def build(self, context: dict[str, Any]) -> dict[str, Any]:
-        """整理上下文，并组装完整的学习计划响应。"""
-        # 复制列表，避免生成计划时意外修改诊断会话中的原始数据。
-        results = list(context.get("diagnosis_results", []))
-        records = list(context.get("answer_records", []))
-        questions = {str(item["id"]): item for item in context.get("questions", [])}
-        tasks = [self._add_schedule(task) for task in context.get("tasks", [])]
-        accuracy = self._accuracy(records)
-        weak_results = sorted(results, key=self._result_score)
+    def __init__(self, llm_client: LLMClient | None = None) -> None:
+        self.llm_client = llm_client or NullLLMClient()
+
+    def build(
+        self,
+        agent_input: LearningPlanAgentInput,
+        *,
+        fallback_tasks: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Generate and validate an LLM plan, falling back on local templates."""
+
+        fallback = self._fallback_plan(agent_input, fallback_tasks)
+        try:
+            raw_response = self.llm_client.generate(self._build_prompt(agent_input))
+        except (ConfigurationError, ExternalServiceError):
+            return fallback
+        if not raw_response.strip():
+            return fallback
+
+        try:
+            payload = self._parse_json_response(raw_response)
+            tasks = self._validated_tasks(payload, agent_input, fallback_tasks)
+            advice = self._validated_advice(payload)
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            return fallback
 
         return {
-            "book": context["book"],
-            "goal": context["goal"],
-            "goalLevel": context["goal_level"],
+            "book": agent_input.book,
+            "goal": agent_input.goal,
+            "goalLevel": agent_input.goal_level,
             "tasks": tasks,
-            "advice": self._build_advice(weak_results, records, questions, accuracy),
-            "resources": self._build_resources(weak_results, records, questions),
+            "advice": advice or fallback["advice"],
+            "resources": agent_input.candidate_resources,
         }
 
     @staticmethod
+    def _parse_json_response(response: str) -> dict[str, Any]:
+        text = response.strip()
+        if text.startswith("```"):
+            lines = text.splitlines()
+            text = "\n".join(lines[1:-1]).strip()
+        payload = json.loads(text)
+        if not isinstance(payload, dict):
+            raise TypeError("learning plan response must be an object")
+        return payload
+
+    def _validated_tasks(
+        self,
+        payload: dict[str, Any],
+        agent_input: LearningPlanAgentInput,
+        fallback_tasks: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        raw_tasks = payload.get("tasks")
+        if not isinstance(raw_tasks, list):
+            raise TypeError("learning plan tasks must be a list")
+
+        allowed_types = set(
+            agent_input.constraints.get("allowedTaskTypes")
+            or LEARNING_TASK_TYPES_BY_SOURCE["diagnostic"]
+        )
+        minimum_minutes = int(agent_input.constraints.get("minTaskMinutes", 5))
+        maximum_minutes = int(agent_input.constraints.get("maxTaskMinutes", 60))
+        fallback_by_ability = {
+            str(task.get("ability_id", "")): task
+            for task in fallback_tasks
+            if task.get("ability_id")
+        }
+        generated_by_ability: dict[str, dict[str, Any]] = {}
+        generated_order: list[str] = []
+
+        for raw_task in raw_tasks:
+            if not isinstance(raw_task, dict):
+                continue
+            ability_id = str(raw_task.get("abilityId", ""))
+            template = fallback_by_ability.get(ability_id)
+            if template is None or ability_id in generated_by_ability:
+                continue
+            task_type = str(raw_task.get("type", ""))
+            if task_type not in allowed_types:
+                task_type = str(template["type"])
+            try:
+                minutes = int(raw_task.get("minutes", template["minutes"]))
+            except (TypeError, ValueError):
+                minutes = int(template["minutes"])
+
+            generated = dict(template)
+            generated.update(
+                {
+                    "title": self._bounded_text(raw_task.get("title"), template["title"], 100),
+                    "type": task_type,
+                    "minutes": max(minimum_minutes, min(minutes, maximum_minutes)),
+                    "reason": self._bounded_text(raw_task.get("reason"), template["reason"], 300),
+                    "description": self._bounded_text(
+                        raw_task.get("description"), template["description"], 500
+                    ),
+                }
+            )
+            generated_by_ability[ability_id] = self._add_schedule(generated)
+            generated_order.append(ability_id)
+
+        # A malformed or incomplete model response must not silently remove a
+        # diagnosed ability from the plan. Missing units retain local defaults.
+        for ability_id, template in fallback_by_ability.items():
+            if ability_id not in generated_by_ability:
+                generated_by_ability[ability_id] = self._constrained_fallback_task(template, agent_input)
+                generated_order.append(ability_id)
+
+        if not generated_order and fallback_tasks:
+            raise ValueError("model returned no recognized planning units")
+        return [generated_by_ability[ability_id] for ability_id in generated_order]
+
+    @staticmethod
+    def _validated_advice(payload: dict[str, Any]) -> list[str]:
+        raw_advice = payload.get("advice", [])
+        if not isinstance(raw_advice, list):
+            return []
+        return [str(item).strip()[:300] for item in raw_advice if str(item).strip()][:5]
+
+    @staticmethod
+    def _bounded_text(value: Any, fallback: str, limit: int) -> str:
+        text = str(value).strip() if value is not None else ""
+        return (text or fallback)[:limit]
+
+    @staticmethod
     def _add_schedule(task: dict[str, Any]) -> dict[str, Any]:
-        """为任务生成预计完成日期；当前默认全部安排在当天。"""
         scheduled = dict(task)
         scheduled.setdefault("expected_completion_date", date.today().isoformat())
         return scheduled
 
-    @staticmethod
-    def _accuracy(records: list[dict[str, Any]]) -> int:
-        """计算已作答题目的百分制正确率，跳过主动跳过的题目。"""
-        answered = [item for item in records if not item.get("skipped")]
-        if not answered:
-            return 0
-        return round(sum(bool(item.get("is_correct")) for item in answered) / len(answered) * 100)
+    def _constrained_fallback_task(
+        self,
+        task: dict[str, Any],
+        agent_input: LearningPlanAgentInput,
+    ) -> dict[str, Any]:
+        constrained = dict(task)
+        minimum = int(agent_input.constraints.get("minTaskMinutes", 5))
+        maximum = int(agent_input.constraints.get("maxTaskMinutes", 60))
+        constrained["minutes"] = max(minimum, min(int(constrained.get("minutes", minimum)), maximum))
+        return self._add_schedule(constrained)
+
+    def _fallback_plan(
+        self,
+        agent_input: LearningPlanAgentInput,
+        fallback_tasks: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        results = list(agent_input.knowledge_point_results)
+        records = list(agent_input.question_evidence)
+        weak_results = sorted(results, key=self._result_score)
+        accuracy = int(round(float(agent_input.diagnostic_summary.get("accuracy", 0))))
+        return {
+            "book": agent_input.book,
+            "goal": agent_input.goal,
+            "goalLevel": agent_input.goal_level,
+            "tasks": [self._constrained_fallback_task(task, agent_input) for task in fallback_tasks],
+            "advice": self._build_advice(weak_results, records, accuracy),
+            "resources": agent_input.candidate_resources,
+        }
 
     @staticmethod
     def _result_score(result: dict[str, Any]) -> tuple[int, float]:
-        """生成排序键：薄弱状态优先，同状态下正确率较低者优先。"""
-        status = result.get("calibrated_status") or result.get("ai_status") or ""
-        correct = int(result.get("correct", 0))
-        total = int(result.get("total", 0))
-        return (0 if status in {"不会", "基本了解"} else 1, correct / total if total else 0)
+        status = result.get("effectiveMasteryLevel") or result.get("masteryLevel") or ""
+        correct = int(result.get("roundCorrect", 0))
+        total = int(result.get("roundTotal", 0))
+        return (0 if status in {"未测评", "不会", "了解"} else 1, correct / total if total else 0)
 
+    @staticmethod
     def _build_advice(
-        self,
         weak_results: list[dict[str, Any]],
         records: list[dict[str, Any]],
-        questions: dict[str, dict[str, Any]],
         accuracy: int,
     ) -> list[str]:
-        """根据薄弱知识点、漏答情况和整体正确率生成文字建议。"""
         advice: list[str] = []
         if weak_results:
             weakest = weak_results[0]
-            name = str(weakest.get("knowledge_point_id", "当前薄弱知识点"))
+            name = str(weakest.get("knowledgePointName") or weakest.get("knowledgePointId") or "当前薄弱知识点")
             advice.append(f"诊断正确率为 {accuracy}%；优先学习“{name}”，再进行针对性复测。")
-        skipped = sum(1 for item in records if item.get("skipped") or not item.get("submitted_answer"))
+        skipped = sum(1 for item in records if item.get("outcome") == "skipped")
         if skipped:
-            advice.append(f"本次诊断有 {skipped} 道题未完成，建议先补齐对应题目。")
+            advice.append(f"本次诊断有 {skipped} 道题未完成，相关结论的证据仍需补充。")
         if records and not advice:
             advice.append(f"本次诊断正确率为 {accuracy}%，建议继续完成计划中的下一项任务。")
-        if not advice and questions:
-            advice.append("当前诊断信息不足，建议先完成一轮诊断题。")
         return advice
 
-    def _build_resources(
-        self,
-        weak_results: list[dict[str, Any]],
-        records: list[dict[str, Any]],
-        questions: dict[str, dict[str, Any]],
-    ) -> list[dict[str, str]]:
-        """从诊断答题记录中提取与薄弱知识点相关的学习资料。"""
-        weak_ids = {str(item.get("knowledge_point_id")) for item in weak_results[:3]}
-        grouped: dict[str, dict[str, str]] = {}
-        for record in records:
-            # 题目标签用于把答题记录关联回诊断结果中的知识点。
-            question = questions.get(str(record.get("question_id")), {})
-            knowledge_point_id = str(question.get("tag", ""))
-            source = str(record.get("source", "")).strip()
-            if not source or (weak_ids and knowledge_point_id not in weak_ids):
-                continue
-            # 资源来源通常以“章节/小节”的形式保存，拆分后生成标题和位置。
-            parts = [part.strip() for part in source.split("/") if part.strip()]
-            title = parts[-1] if parts else source
-            location = " / ".join(parts[:-1]) if len(parts) > 1 else source
-            grouped[source] = {
-                "id": f"diagnostic-source-{len(grouped) + 1}",
-                "type": "教材",
-                "title": title,
-                "location": location,
-                "excerpt": f"该资料来自诊断题关联来源，用于复习“{knowledge_point_id}”。",
-            }
-        return list(grouped.values())
+    @staticmethod
+    def _build_prompt(agent_input: LearningPlanAgentInput) -> str:
+        context = {
+            "book": agent_input.book,
+            "learningGoal": agent_input.goal,
+            "goalLevel": agent_input.goal_level,
+            "diagnosticSummary": agent_input.diagnostic_summary,
+            "knowledgePointResults": agent_input.knowledge_point_results,
+            "abilityUnits": agent_input.ability_units,
+            "questionEvidence": agent_input.question_evidence,
+            "candidateResources": agent_input.candidate_resources,
+            "calibration": agent_input.calibration,
+            "learnerPreferences": agent_input.learner_preferences,
+            "constraints": agent_input.constraints,
+        }
+        return f"""你是 Study Companion 的学习计划 Agent。请根据后端已经验证的诊断事实生成学习任务排序和学习建议。
+
+规则：
+1. 不得修改或重新计算掌握等级、掌握分数、正确率和置信度。
+2. 每个任务的 abilityId 只能取自 abilityUnits；不得创造能力、知识点、题目或资料 ID。
+3. 每个 abilityId 最多输出一个任务，并覆盖所有 abilityUnits。
+4. type 只能取 constraints.allowedTaskTypes；minutes 必须在约束范围内。
+5. 如果提供 learnerPreferences.sessionTimeBudgetMinutes，每项任务时长不得超过该值；它是用户期望的单次学习时长，不是整个计划的总时长。
+6. 优先处理有效掌握等级较低、答错较多或用户校准后较弱的能力，并参考用户填写的 calibration.reason。
+7. title、reason、description 必须是简洁、可执行的中文，不要声称用户做过输入中没有记录的行为。
+8. candidateResources 仅包含本轮诊断知识点的关联来源；不得要求或创造完整资源目录。
+9. 只输出合法 JSON，不要输出 Markdown 或思考过程。
+
+输出格式：
+{{
+  "tasks": [
+    {{
+      "abilityId": "输入中的能力ID",
+      "title": "任务标题",
+      "type": "concept_review|practice|retest",
+      "minutes": 20,
+      "reason": "基于诊断证据的原因",
+      "description": "具体执行说明"
+    }}
+  ],
+  "advice": ["总体学习建议"]
+}}
+
+输入：
+{json.dumps(context, ensure_ascii=False)}
+"""

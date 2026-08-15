@@ -11,7 +11,7 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from .diagnosis_workflow import DiagnosisWorkflow
+from .workflow import DiagnosisWorkflow
 from .schemas import (
     DiagnosticAnswerRequest,
     DiagnosticAnswerResponse,

@@ -1,1 +1,19 @@
 """学习计划生成模块。"""
+
+from .models import (
+    LEARNING_TASK_STATUSES,
+    LEARNING_TASK_SOURCES,
+    LEARNING_TASK_TYPES,
+    LEARNING_TASK_TYPES_BY_SOURCE,
+    LEARNING_TASK_TYPE_LABELS,
+    LearningTask,
+)
+
+__all__ = [
+    "LearningTask",
+    "LEARNING_TASK_STATUSES",
+    "LEARNING_TASK_SOURCES",
+    "LEARNING_TASK_TYPES",
+    "LEARNING_TASK_TYPES_BY_SOURCE",
+    "LEARNING_TASK_TYPE_LABELS",
+]

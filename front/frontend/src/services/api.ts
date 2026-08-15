@@ -34,7 +34,7 @@ export type TodayLearningResponse = {
 };
 export type QaConversation = { conversationId: string; bookId: BookId; userId: string; createdAt: string; status: string };
 export type QaQuestionPayload = { bookId: BookId; question: string; conversationId?: string; sources?: Source[] };
-export type QaResult = { answer: string; citations: Source[]; relatedKnowledgePoints?: string[]; recommendedAction?: string; conversationId?: string; requestId?: string };
+export type QaResult = { answer: string; refused: boolean; citations: Source[]; relatedKnowledgePoints?: string[]; recommendedAction?: string; conversationId?: string; requestId?: string };
 export type MaterialLearningPlanPayload = { bookId: BookId; title: string; goal: string; description: string; minutes: number; expectedCompletionDate: string; resources: Source[] };
 export type LearningActivity = {
   id: string;
@@ -48,12 +48,8 @@ export type LearningActivity = {
   createdAt: string;
   updatedAt: string;
   bookId?: string | null;
-  learningGoalId?: string | null;
   planId?: string | null;
   taskId?: string | null;
-  diagnosticId?: string | null;
-  qaConversationId?: string | null;
-  learnerProfileId?: string | null;
   knowledgePointIds: string[];
   result: Record<string, unknown>;
   detail: Record<string, unknown>;
@@ -71,14 +67,17 @@ export type LearnerProfile = {
   learning_domain: string;
   background: string;
   self_assessed_level: string;
-  known_skill_ids: string[];
-  known_skill_note: string;
+  known_knowledge_point_ids: string[];
+  known_knowledge_point_note: string;
+  unknown_knowledge_point_ids: string[];
   current_confusions: string;
   additional_requirements: string;
   preferences: LearnerPreferences;
 };
 export type LearnerProfilePayload = Omit<LearnerProfile, "preferences"> & { preferences: LearnerPreferences };
 export type LearnerProfileResult = { exists: boolean; profile: LearnerProfile | null };
+export type KnowledgePoint = { id: string; name: string; description: string };
+export type KnowledgePointResult = { learningDomain: string; knowledgePoints: KnowledgePoint[] };
 export type LearnerProfileWorkflowStart = { workflowId: string; status: "pending_confirmation"; draft: LearnerProfile; allowedActions: Array<"approve" | "edit" | "reject"> };
 
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -189,11 +188,14 @@ export const mockApi = {
   async askQuestion(payload: QaQuestionPayload & { sources: Source[] }): Promise<QaResult> {
     await wait(720);
     if (payload.question.includes("接口失败")) throw { code: "QA_TEMPORARY_ERROR", message: "资料问答暂时不可用，请稍后重试。", retryable: true } satisfies ApiError;
-    return { answer: "这是一个很好的追问。建议先从定义、输入条件和输出结果三个角度拆解，再结合引用资料核对关键概念。", citations: payload.sources };
+    return { answer: "这是一个很好的追问。建议先从定义、输入条件和输出结果三个角度拆解，再结合引用资料核对关键概念。", refused: false, citations: payload.sources };
   },
   async getLearnerProfile(userId: string, learningDomain: string): Promise<LearnerProfileResult> {
     await wait(260);
     return { exists: false, profile: null };
+  },
+  async getKnowledgePoints(_learningDomain: string): Promise<KnowledgePointResult> {
+    return { learningDomain: _learningDomain, knowledgePoints: [] };
   },
   async saveLearnerProfile(payload: LearnerProfilePayload): Promise<LearnerProfileResult> {
     await wait(420);
@@ -226,6 +228,7 @@ export const realApi = {
   },
   askQuestion: (payload: QaQuestionPayload) => request<QaResult>(`/rag/conversations/${encodeURIComponent(payload.conversationId ?? "")}/messages`, { method: "POST", body: JSON.stringify({ bookId: payload.bookId, question: payload.question, userId: "user_001" }) }),
   getLearnerProfile: (userId: string, learningDomain: string) => request<LearnerProfileResult>(`/learner-profile?user_id=${encodeURIComponent(userId)}&learning_domain=${encodeURIComponent(learningDomain)}`),
+  getKnowledgePoints: (learningDomain: string) => request<KnowledgePointResult>(`/learner-profile/knowledge-points?learning_domain=${encodeURIComponent(learningDomain)}`),
   saveLearnerProfile: async (payload: LearnerProfilePayload) => {
     const started = await request<LearnerProfileWorkflowStart>("/learner-profile/workflows", { method: "POST", body: JSON.stringify(payload) });
     return request<LearnerProfileResult>(`/learner-profile/workflows/${encodeURIComponent(started.workflowId)}/review`, { method: "POST", body: JSON.stringify({ action: "approve" }) });

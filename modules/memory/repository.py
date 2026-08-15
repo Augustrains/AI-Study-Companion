@@ -6,50 +6,45 @@ from typing import Any
 
 from modules.common import api as common_api
 
-from .models import LongTermMemory
+from .models import LearnerMemory
 
 
 class JsonMemoryRepository:
-    DEFAULT_PATH = Path(__file__).resolve().parents[2] / "data" / "memory" / "long_term_memories.json"
+    DEFAULT_PATH = Path(__file__).resolve().parents[2] / "data" / "memory" / "learner_memories.json"
 
-    def __init__(
-        self,
-        path: str | Path | None = None,
-        reader: common_api.json_storage.JsonContentReader | None = None,
-        store: common_api.json_storage.JsonStore | None = None,
-    ) -> None:
+    def __init__(self, path: str | Path | None = None, reader: common_api.json_storage.JsonContentReader | None = None, store: common_api.json_storage.JsonStore | None = None) -> None:
         self.path = Path(path) if path is not None else Path(reader.path) if reader is not None else self.DEFAULT_PATH
         self.reader = reader or common_api.json_storage.JsonContentReader(self.path)
         self.store = store or common_api.json_storage.JsonStore()
 
-    def upsert(self, memory: LongTermMemory) -> LongTermMemory:
-        self.store.save(
-            path=self.path,
-            content=memory.to_dict(),
-            mode="upsert",
-            key_path=[memory.id],
-        )
+    @staticmethod
+    def key(user_id: str, learning_domain: str) -> str:
+        return f"{user_id}:{learning_domain}"
+
+    def get(self, user_id: str, learning_domain: str) -> LearnerMemory | None:
+        payload = self._read_all().get(self.key(user_id, learning_domain))
+        if not isinstance(payload, dict):
+            return None
+        return common_api.serialization.from_data(LearnerMemory, payload)
+
+    def upsert(self, memory: LearnerMemory) -> LearnerMemory:
+        self.store.save(path=self.path, content=memory.to_dict(), mode="upsert", key_path=[self.key(memory.user_id, memory.learning_domain)])
         return memory
 
-    def remove(self, memory_id: str) -> None:
-        records = self._read_all()
-        if memory_id in records:
-            records.pop(memory_id)
-            self.store.save(path=self.path, content=records, mode="overwrite")
-
-    def list_for_user(self, user_id: str, learning_domain: str | None = None) -> list[LongTermMemory]:
-        records = self._read_all().values()
-        return [
-            common_api.serialization.from_data(LongTermMemory, item)
-            for item in records
-            if item.get("user_id") == user_id
-            and (learning_domain is None or item.get("learning_domain") == learning_domain)
-        ]
+    def list_for_user(self, user_id: str, learning_domain: str | None = None) -> list[LearnerMemory]:
+        memories = []
+        for payload in self._read_all().values():
+            if not isinstance(payload, dict) or payload.get("user_id") != user_id:
+                continue
+            if learning_domain is not None and payload.get("learning_domain") != learning_domain:
+                continue
+            memories.append(common_api.serialization.from_data(LearnerMemory, payload))
+        return memories
 
     def _read_all(self) -> dict[str, dict[str, Any]]:
         payload = self.reader.read(allow_missing=True, allow_empty=False)
         if not isinstance(payload, dict):
-            raise common_api.errors.StorageReadError("memory resource must be a JSON object")
+            raise common_api.errors.StorageReadError("learner memory resource must be a JSON object")
         return payload
 
     @staticmethod

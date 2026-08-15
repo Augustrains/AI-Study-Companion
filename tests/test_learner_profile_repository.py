@@ -32,7 +32,7 @@ class LearnerProfileRepositoryTest(unittest.TestCase):
                 learning_domain="machine_learning",
                 background="学过 Python",
                 self_assessed_level="basic",
-                known_skill_ids=["python"],
+                known_knowledge_point_ids=["python"],
                 preferences=LearningPreferences(activity_types=["quiz"]),
             )
 
@@ -53,16 +53,16 @@ class LearnerProfileRepositoryTest(unittest.TestCase):
                 common_api.json_storage.JsonContentReader(path),
                 common_api.json_storage.JsonStore(),
             )
-            repository.save(LearnerProfile(user_id="user_001", learning_domain="machine_learning", background="机器学习背景", known_skill_ids=["python"]))
-            repository.save(LearnerProfile(user_id="user_001", learning_domain="reinforcement_learning", background="强化学习背景", known_skill_ids=["mdp"]))
+            repository.save(LearnerProfile(user_id="user_001", learning_domain="machine_learning", background="机器学习背景", known_knowledge_point_ids=["python"]))
+            repository.save(LearnerProfile(user_id="user_001", learning_domain="reinforcement_learning", background="强化学习背景", known_knowledge_point_ids=["mdp"]))
 
             self.assertEqual(repository.get("user_001", "machine_learning").background, "机器学习背景")
             self.assertEqual(repository.get("user_001", "reinforcement_learning").background, "强化学习背景")
 
-            repository.save(LearnerProfile(user_id="user_001", learning_domain="machine_learning", background="新画像", known_skill_ids=[]))
+            repository.save(LearnerProfile(user_id="user_001", learning_domain="machine_learning", background="新画像", known_knowledge_point_ids=[]))
             stored = json.loads(path.read_text(encoding="utf-8"))["user_001"]
             self.assertEqual(stored["machine_learning"]["background"], "新画像")
-            self.assertEqual(stored["machine_learning"]["known_skill_ids"], [])
+            self.assertEqual(stored["machine_learning"]["known_knowledge_point_ids"], [])
             self.assertEqual(stored["reinforcement_learning"]["background"], "强化学习背景")
 
 

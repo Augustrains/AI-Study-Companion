@@ -49,6 +49,7 @@ class AskMaterialQuestionResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     answer: str
+    refused: bool
     citations: list[MaterialQaSource]
     related_knowledge_points: list[str] = Field(default_factory=list, alias="relatedKnowledgePoints")
     recommended_action: str | None = Field(default=None, alias="recommendedAction")

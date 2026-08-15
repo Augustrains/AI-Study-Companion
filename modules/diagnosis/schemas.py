@@ -45,6 +45,8 @@ class DiagnosticOptionResponse(BaseModel):
 class DiagnosticQuestionResponse(BaseModel):
     """返回给前端的题目结构。"""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     id: str
     title: str
     tag: str
@@ -53,7 +55,7 @@ class DiagnosticQuestionResponse(BaseModel):
     chapter_id: str = Field(default="", alias="chapterId")
     section_ids: list[str] = Field(default_factory=list, alias="sectionIds")
     knowledge_point_ids: list[str] = Field(default_factory=list, alias="knowledgePointIds")
-    difficulty: str = ""
+    task_mode: str = Field(default="diagnostic", alias="taskMode")
 
 
 class DiagnosticStartResponse(BaseModel):

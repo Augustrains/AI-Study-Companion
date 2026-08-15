@@ -45,6 +45,14 @@ def serve_web(host: str | None = None, backend_port: int | None = None, frontend
         raise FileNotFoundError(f"前端目录不存在: {FRONTEND_DIR}")
 
     dependencies = build_api_dependencies(settings)
+    try:
+        logger.info("正在预热资料问答 Embedding 模型和 Qdrant 客户端……")
+        dependencies.start()
+        logger.info("资料问答资源预热完成。")
+    except Exception:
+        dependencies.close()
+        logger.exception("资料问答资源预热失败，后端未启动。")
+        raise
     backend = uvicorn.Server(
         uvicorn.Config(
             create_app(dependencies),

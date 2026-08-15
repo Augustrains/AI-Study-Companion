@@ -6,6 +6,11 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .models import LEARNING_TASK_STATUSES, LEARNING_TASK_TYPES
+
+LearningTaskStatus = Literal[tuple(LEARNING_TASK_STATUSES)]
+LearningTaskType = Literal[tuple(LEARNING_TASK_TYPES)]
+
 
 class GenerateLearningPlanRequest(BaseModel):
     """从已校准诊断生成学习计划所需的请求字段。"""
@@ -45,6 +50,7 @@ class LearningPlanSourceResponse(BaseModel):
     title: str
     location: str
     excerpt: str
+    book_id: str = Field(default="", alias="bookId")
     chapter_id: str = Field(default="", alias="chapterId")
     section_id: str = Field(default="", alias="sectionId")
     content_unit_id: str = Field(default="", alias="contentUnitId")
@@ -59,7 +65,7 @@ class LearningPlanTaskResponse(BaseModel):
     title: str
     type: str
     minutes: int
-    status: Literal["completed", "in_progress", "todo", "review_due", "skipped", "rescheduled"]
+    status: LearningTaskStatus
     reason: str
     description: str
     learning_goal: str = Field(default="", alias="learningGoal")

@@ -2,179 +2,140 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from .models import LongTermMemory
+from .models import MASTERY_LEVELS, EvidenceSummary, KnowledgePointMemory, LearnerMemory
 from .repository import JsonMemoryRepository
-from .rules import validate_memory
+from .rules import validate_knowledge_point_memory
 
 if TYPE_CHECKING:
     from modules.diagnosis.models import DiagnosisResult
 
 
 class MemoryModule:
-    """Owns durable memories derived from completed learning activities."""
+    """Owns one durable LearnerMemory aggregate per user and domain."""
 
     def __init__(self, repository: JsonMemoryRepository) -> None:
         self.repository = repository
 
-    def ingest_diagnosis(self, diagnosis: DiagnosisResult) -> list[LongTermMemory]:
+    @staticmethod
+    def _domain(value: str) -> str:
+        return {"machine_learning": "ml-001", "deep_learning": "dl-001"}.get(str(value), str(value))
+
+    def get_learner_memory(self, user_id: str, learning_domain: str) -> LearnerMemory:
+        domain = self._domain(learning_domain)
+        return self.repository.get(user_id, domain) or LearnerMemory(user_id=user_id, learning_domain=domain)
+
+    def _save(self, memory: LearnerMemory) -> LearnerMemory:
+        memory.updated_at = self.repository.now()
+        memory.update_count += 1
+        return self.repository.upsert(memory)
+
+    def sync_learner_profile(self, profile: Any) -> LearnerMemory:
+        memory = self.get_learner_memory(profile.user_id, profile.learning_domain)
+        known = {str(item) for item in profile.known_knowledge_point_ids if item}
+        now = self.repository.now()
+        existing = {item.knowledge_point_id: item for item in memory.knowledge_points}
+        memory.knowledge_points = [item for item in memory.knowledge_points if item.knowledge_point_id in known]
+        description = str(getattr(profile, "known_knowledge_point_note", "") or "")
+        for key in sorted(known):
+            previous = existing.get(key)
+            point = KnowledgePointMemory(
+                knowledge_point_id=key,
+                name=previous.name if previous else "",
+                description=description,
+                mastery_level=MASTERY_LEVELS[-1],
+                mastery_score=1.0,
+                confidence=1.0,
+                memory_status="稳定保持",
+                memory_stability_days=60.0,
+                evidence_summary=EvidenceSummary(),
+                next_review_at=None,
+                updated_at=now,
+                update_count=(previous.update_count + 1) if previous else 1,
+                source="learner_profile",
+            )
+            validate_knowledge_point_memory(point)
+            memory.knowledge_points = [item for item in memory.knowledge_points if item.knowledge_point_id != key]
+            memory.knowledge_points.append(point)
+        memory.current_confusions = str(profile.current_confusions)
+        memory.preferences = profile.preferences.to_dict() if hasattr(profile.preferences, "to_dict") else dict(profile.preferences.__dict__)
+        return self._save(memory)
+
+    def ingest_diagnosis(self, diagnosis: DiagnosisResult) -> LearnerMemory:
         from modules.diagnosis.models import STATUSES
 
-        domain = diagnosis.book_id
-        source = f"diagnostic:{diagnosis.diagnosis_id}"
-        answer_records = diagnosis.answer_records
-        total = len(answer_records)
-        correct = sum(bool(item.get("is_correct")) for item in answer_records)
-        memories: list[LongTermMemory] = []
-
-        overall_level = max(
-            (result.ai_status for result in diagnosis.results),
-            key=lambda status: STATUSES.index(status),
-            default=STATUSES[0],
-        )
-        memories.append(
-            self._upsert(
-                diagnosis.user_id,
-                domain,
-                "diagnosis_summary",
-                diagnosis.diagnosis_id,
-                {
-                    "diagnostic_id": diagnosis.diagnosis_id,
-                    "accuracy": round(correct / total * 100) if total else 0,
-                    "correct_count": correct,
-                    "total_count": total,
-                    "level": overall_level,
-                    "knowledge_points": [
-                        {
-                            "tag": result.knowledge_point_id,
-                            "level": result.calibrated_status or result.ai_status,
-                            "correct": result.correct,
-                            "total": result.total,
-                        }
-                        for result in diagnosis.results
-                    ],
-                },
-                1.0 if total else 0.0,
-                source,
-            )
-        )
-
+        memory = self.get_learner_memory(diagnosis.user_id, diagnosis.book_id)
+        total = len(diagnosis.answer_records)
+        correct = sum(bool(item.get("is_correct")) for item in diagnosis.answer_records)
+        memory.diagnosis_summary = {
+            "diagnostic_id": diagnosis.diagnosis_id,
+            "accuracy": round(correct / total * 100) if total else 0,
+            "correct_count": correct,
+            "total_count": total,
+            "level": max((result.ai_status for result in diagnosis.results), key=lambda status: STATUSES.index(status), default=STATUSES[0]),
+        }
+        now = self.repository.now()
+        points = {item.knowledge_point_id: item for item in memory.knowledge_points}
         for result in diagnosis.results:
             status = result.calibrated_status or result.ai_status
-            memories.append(
-                self._upsert(
-                    diagnosis.user_id,
-                    domain,
-                    "knowledge_state",
-                    result.knowledge_point_id,
-                    status,
-                    result.correct / result.total if result.total else 0.0,
-                    source,
-                )
+            previous = points.get(result.knowledge_point_id)
+            points[result.knowledge_point_id] = KnowledgePointMemory(
+                knowledge_point_id=result.knowledge_point_id,
+                name=previous.name if previous else "",
+                description=previous.description if previous else "",
+                mastery_level=status,
+                mastery_score=float(getattr(result, "mastery_score", 0.0)),
+                confidence=float(getattr(result, "confidence", result.correct / result.total if result.total else 0.0)),
+                memory_status=getattr(result, "memory_status", "未验证"),
+                memory_stability_days=float(getattr(result, "memory_stability_days", 0.0)),
+                evidence_summary=EvidenceSummary.from_rule_payload(getattr(result, "evidence_summary", {})),
+                next_review_at=getattr(result, "next_review_at", None),
+                updated_at=now,
+                update_count=(previous.update_count + 1) if previous else 1,
+                source=f"diagnostic:{diagnosis.diagnosis_id}",
             )
-        return memories
+        memory.knowledge_points = list(points.values())
+        return self._save(memory)
 
-    def sync_learner_profile(self, profile: Any) -> list[LongTermMemory]:
-        """Initialize or replace memories derived from a confirmed profile."""
-        domain = {"machine_learning": "ml-001", "deep_learning": "dl-001"}.get(
-            str(profile.learning_domain), str(profile.learning_domain)
-        )
-        source = f"learner_profile:{profile.user_id}:{domain}"
-        current = self.list_for_user(profile.user_id, domain)
-        known = {str(item) for item in profile.known_skill_ids if item}
-        # Remove profile-derived knowledge states no longer present after an edit.
-        for item in current:
-            if item.memory_type == "knowledge_state" and item.source == source and item.key not in known:
-                self.repository.remove(item.id)
-
-        memories = [
-            self._upsert(
-                profile.user_id,
-                domain,
-                "learner_profile",
-                "profile",
-                {
-                    "background": profile.background,
-                    "self_assessed_level": profile.self_assessed_level,
-                    "known_skill_note": profile.known_skill_note,
-                    "current_confusions": profile.current_confusions,
-                    "additional_requirements": profile.additional_requirements,
-                    "preferences": profile.preferences.to_dict() if hasattr(profile.preferences, "to_dict") else profile.preferences.__dict__,
-                },
-                1.0,
-                source,
-            )
-        ]
-        memories.extend(
-            self._upsert(profile.user_id, domain, "knowledge_state", key, "mastered", 0.7, source)
-            for key in sorted(known)
-        )
-        return memories
-
-    def list_for_user(self, user_id: str, learning_domain: str | None = None) -> list[LongTermMemory]:
-        return self.repository.list_for_user(user_id, learning_domain)
-
-    def ingest_task_completion(
-        self,
-        *,
-        user_id: str,
-        learning_domain: str,
-        task_id: str,
-        knowledge_point_ids: list[str],
-        source: str | None = None,
-    ) -> list[LongTermMemory]:
-        """Update knowledge-state memories after a plan task is completed.
-
-        A completion is evidence of progress, but not by itself proof of mastery;
-        therefore an existing state advances by at most one level.
-        """
+    #完成任务更新记忆
+    def ingest_task_completion(self, *, user_id: str, learning_domain: str, task_id: str, knowledge_point_ids: list[str], source: str | None = None) -> LearnerMemory:
         from modules.diagnosis.models import STATUSES
 
-        existing = {item.key: item for item in self.list_for_user(user_id, learning_domain)}
-        updated: list[LongTermMemory] = []
-        for key in dict.fromkeys(str(item) for item in knowledge_point_ids if item and str(item) != "unknown"):
-            previous = existing.get(key)
-            previous_status = str(previous.value) if previous and isinstance(previous.value, str) else STATUSES[0]
-            current_index = STATUSES.index(previous_status) if previous_status in STATUSES else 0
-            next_status = STATUSES[min(current_index + 1, len(STATUSES) - 1)]
-            confidence = max(previous.confidence if previous else 0.0, 0.5)
-            updated.append(
-                self._upsert(
-                    user_id,
-                    learning_domain,
-                    "knowledge_state",
-                    key,
-                    next_status,
-                    confidence,
-                    source or f"task:{task_id}",
-                )
-            )
-        return updated
-
-    def mastered_skill_ids(self, user_id: str, learning_domain: str) -> set[str]:
-        """Return knowledge-point-as-skill IDs that have reached mastery."""
-        mastered = {"鎺屾彙", "掌握", "mastered", "proficient"}
-        return {
-            item.key
-            for item in self.list_for_user(user_id, learning_domain)
-            if item.memory_type == "knowledge_state"
-            and str(item.value) in mastered
-        }
-
-    def _upsert(self, user_id: str, domain: str, memory_type: str, key: str, value: Any, confidence: float, source: str) -> LongTermMemory:
-        memory_id = f"{user_id}:{domain}:{memory_type}:{key}"
+        #读取用户已有的 LearnerMemory
+        memory = self.get_learner_memory(user_id, learning_domain)
+        #找到任务关联知识点
+        points = {item.knowledge_point_id: item for item in memory.knowledge_points}
         now = self.repository.now()
-        existing = next((item for item in self.repository.list_for_user(user_id, domain) if item.id == memory_id), None)
-        memory = LongTermMemory(
-            id=memory_id,
-            user_id=user_id,
-            learning_domain=domain,
-            memory_type=memory_type,
-            key=key,
-            value=value,
-            confidence=round(confidence, 4),
-            source=source,
-            created_at=existing.created_at if existing else now,
-            updated_at=now,
-        )
-        validate_memory(memory)
-        return self.repository.upsert(memory)
+        #将知识点掌握阶段提升一级，更新updated_at、update_count字段
+        for key in dict.fromkeys(str(item) for item in knowledge_point_ids if item and str(item) != "unknown"):
+            previous = points.get(key)
+            previous_status = previous.mastery_level if previous else STATUSES[0]
+            index = STATUSES.index(previous_status) if previous_status in STATUSES else 0
+            points[key] = KnowledgePointMemory(
+                knowledge_point_id=key,
+                name=previous.name if previous else "",
+                description=previous.description if previous else "",
+                mastery_level=STATUSES[min(index + 1, len(STATUSES) - 1)],
+                mastery_score=previous.mastery_score if previous else 0.0,
+                confidence=max(previous.confidence if previous else 0.0, 0.5),
+                memory_status=previous.memory_status if previous else "未验证",
+                memory_stability_days=previous.memory_stability_days if previous else 0.0,
+                evidence_summary=previous.evidence_summary if previous else EvidenceSummary(),
+                next_review_at=previous.next_review_at if previous else None,
+                updated_at=now,
+                update_count=(previous.update_count + 1) if previous else 1,
+                source=source or f"task:{task_id}",
+            )
+        memory.knowledge_points = list(points.values())
+        return self._save(memory)
+
+    def mastered_knowledge_point_ids(self, user_id: str, learning_domain: str) -> set[str]:
+        mastered = {MASTERY_LEVELS[-1]}
+        memory = self.get_learner_memory(user_id, learning_domain)
+        return {item.knowledge_point_id for item in memory.knowledge_points if item.mastery_level in mastered}
+
+    def knowledge_point_mastery(self, user_id: str, learning_domain: str) -> dict[str, str]:
+        memory = self.get_learner_memory(user_id, learning_domain)
+        return {item.knowledge_point_id: item.mastery_level for item in memory.knowledge_points}
+
+    def list_for_user(self, user_id: str, learning_domain: str | None = None) -> list[LearnerMemory]:
+        return self.repository.list_for_user(user_id, self._domain(learning_domain) if learning_domain else None)

@@ -59,17 +59,13 @@ class LearningActivity(
     # 关联的学习内容、教材或课程 ID。
     book_id: str = ""
     # 关联的学习目标 ID。
-    learning_goal_id: str = ""
     # 关联的学习计划 ID。
     plan_id: str = ""
     # 关联的学习任务 ID。
     task_id: str = ""
     # 关联的能力诊断会话 ID。
-    diagnostic_id: str = ""
     # 关联的资料问答会话 ID。
-    qa_conversation_id: str = ""
     # 关联的人物画像 ID。
-    learner_profile_id: str = ""
     # 活动关联的知识点 ID 列表。
     knowledge_point_ids: list[str] = field(default_factory=list)
 

@@ -27,5 +27,17 @@ data/                        题库、学习材料和画像数据
 sdk/                         LLM 等基础能力接口
 ```
 
+## OpenCode Go 模型配置
+
+诊断选题、资料问答与诊断后的学习计划生成通过 OpenCode Go 的 OpenAI-compatible Chat Completions API 调用 `deepseek-v4-flash`。项目启动时会自动读取根目录 `.env`，请先填写：
+
+```dotenv
+STUDY_COMPANION_LLM_API_KEY=your_opencode_api_key
+STUDY_COMPANION_LLM_MODEL=deepseek-v4-flash
+STUDY_COMPANION_LLM_BASE_URL=https://opencode.ai/zen/go/v1
+```
+
+然后运行 `python main.py`。可选环境变量见 `.env.example`；模型、接口地址和超时时间均可覆盖。已存在的系统环境变量优先于 `.env`。
+
 每个业务模块内部独立维护自己的模型、Service、Workflow、Repository 和 API，
 应用启动时由 `bootstrap` 组装，再由 `api/server.py` 注册到 FastAPI。

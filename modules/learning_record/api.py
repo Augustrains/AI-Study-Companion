@@ -21,15 +21,21 @@ def build_router(module: LearningRecordModule, learning_plan: Any | None = None)
                 plan_id=payload.plan_id.strip(),
                 book_id=payload.book_id.strip(),
             )
+        # 完成任务时，知识点必须来自服务端任务，不能由前端覆盖。
+        recorded_knowledge_point_ids = (
+            list(plan_result.get("knowledgePointIds", []))
+            if payload.event_type == "task_completed" and learning_plan is not None
+            else payload.knowledge_point_ids
+        )
         activity = module.record_learning_event(
             user_id=payload.user_id.strip(),
             task_id=payload.task_id.strip(),
             task_title=payload.task_title.strip(),
             event_type=payload.event_type,
             status=payload.status,
-            plan_id=payload.plan_id or str(plan_result.get("planId", "")),
-            book_id=payload.book_id or str(plan_result.get("bookId", "")),
-            knowledge_point_ids=payload.knowledge_point_ids or list(plan_result.get("knowledgePointIds", [])),
+            plan_id=(str(plan_result.get("planId", "")) if plan_result else payload.plan_id),
+            book_id=(str(plan_result.get("bookId", "")) if plan_result else payload.book_id),
+            knowledge_point_ids=recorded_knowledge_point_ids,
             detail={**payload.detail, "plan_completed": plan_result.get("planCompleted", False), "memory_updated": plan_result.get("memoryUpdated", False)},
             client_request_id=payload.client_request_id,
         )

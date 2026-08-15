@@ -3,8 +3,8 @@ from pathlib import Path
 
 from modules.diagnosis.agent import DiagnosticAgent
 from modules.diagnosis.models import DiagnosticSession
-from modules.diagnosis.question_bank import QuestionBank
-from modules.diagnosis.diagnosis_workflow import AssessmentService, DiagnosticSessionStore, DiagnosisWorkflow
+from modules.diagnosis.services import AssessmentService, DiagnosticSessionStore, QuestionBank
+from modules.diagnosis.workflow import DiagnosisWorkflow
 from sdk.llm_client import NullLLMClient
 
 
@@ -59,6 +59,21 @@ class DiagnosisWorkflowTest(unittest.TestCase):
         self.assertEqual(saved.status, "completed")
         self.assertIsNotNone(saved.result)
         self.assertEqual(saved.result["answer_records"][0]["is_correct"], True)
+
+    def test_user_calibration_and_reason_are_preserved_for_planning(self) -> None:
+        diagnosis_id, _ = self.start_and_submit()
+
+        diagnosis = self.workflow.confirm_diagnosis(
+            diagnosis_id,
+            calibration="higher",
+            reason="我在实际项目中使用过这个知识点。",
+        )
+
+        self.assertIsNotNone(diagnosis)
+        saved = self.repository.get(diagnosis_id)
+        self.assertEqual(saved.calibration, "higher")
+        self.assertEqual(saved.calibration_reason, "我在实际项目中使用过这个知识点。")
+        self.assertEqual(saved.result["calibration"]["reason"], "我在实际项目中使用过这个知识点。")
 
     def test_rejected_diagnostic_session_is_not_completed(self) -> None:
         diagnosis_id, _ = self.start_and_submit()

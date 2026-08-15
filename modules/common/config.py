@@ -67,7 +67,7 @@ class Settings:
     @property
     def memory_path(self) -> Path:
         """记忆模块持久化文件的默认路径。"""
-        return self.data_dir / "memory" / "long_term_memories.json"
+        return self.data_dir / "memory" / "learner_memories.json"
 
     @property
     def questions_dir(self) -> Path:
@@ -80,18 +80,28 @@ class Settings:
         return self.project_dir / "data" / "02-内容与数据" / "data"
 
     @property
+    def question_new_dir(self) -> Path:
+        return self.data_dir / "question_new"
+
+    @property
+    def knowledge_points_dir(self) -> Path:
+        return self.question_new_dir / "知识点"
+
+    @property
+    def new_material_dir(self) -> Path:
+        return self.question_new_dir / "教材"
+
+    @property
     def qdrant_path(self) -> Path:
         """本地 Qdrant 持久化目录，可通过环境变量覆盖。"""
-        default_path = self.data_dir / "qdrant"
-        small_model_path = self.data_dir / "qdrant-bge-small-zh"
-        if not os.getenv("STUDY_COMPANION_QDRANT_PATH") and self.embedding_model != "BAAI/bge-m3" and small_model_path.exists():
-            default_path = small_model_path
+        # BGE-M3 生成 1024 维向量，不能复用旧中文模型的 512 维索引。
+        default_path = self.data_dir / "qdrant-bge-m3"
         return Path(os.getenv("STUDY_COMPANION_QDRANT_PATH", default_path)).resolve()
 
     @property
     def embedding_model(self) -> str:
         """资料问答使用的 Embedding 模型名称或本地路径。"""
-        default_model = self.project_dir / "models" / "bge-small-zh-v1.5"
+        default_model = self.project_dir / "models" / "bge-m3"
         return os.getenv("STUDY_COMPANION_EMBEDDING_MODEL", str(default_model) if default_model.exists() else "BAAI/bge-m3")
 
     @classmethod

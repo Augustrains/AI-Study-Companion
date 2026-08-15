@@ -14,8 +14,9 @@ PROFILE_SCHEMA = {
     "learning_domain": common_api.schema_validator.FieldSpec(field_type=str, required=True, nullable=False, min_length=1),
     "background": common_api.schema_validator.FieldSpec(field_type=str, required=True, nullable=False, min_length=1),
     "self_assessed_level": common_api.schema_validator.FieldSpec(field_type=str, choices={"unknown", "none", "basic", "practice", "independent"}, default="unknown"),
-    "known_skill_ids": common_api.schema_validator.FieldSpec(field_type=list, item_type=str, default=list),
-    "known_skill_note": common_api.schema_validator.FieldSpec(field_type=str, default=""),
+    "known_knowledge_point_ids": common_api.schema_validator.FieldSpec(field_type=list, item_type=str, default=list),
+    "known_knowledge_point_note": common_api.schema_validator.FieldSpec(field_type=str, default=""),
+    "unknown_knowledge_point_ids": common_api.schema_validator.FieldSpec(field_type=list, item_type=str, default=list),
     "current_confusions": common_api.schema_validator.FieldSpec(field_type=str, default=""),
     "additional_requirements": common_api.schema_validator.FieldSpec(field_type=str, default=""),
 }
@@ -37,8 +38,9 @@ def parse_profile_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "learning_domain": common_api.field_parser.text_value(),
         "background": common_api.field_parser.text_value(),
         "self_assessed_level": common_api.field_parser.text_value("unknown"),
-        "known_skill_ids": common_api.field_parser.unique_strings(),
-        "known_skill_note": common_api.field_parser.text_value(),
+        "known_knowledge_point_ids": common_api.field_parser.unique_strings([]),
+        "known_knowledge_point_note": common_api.field_parser.text_value(),
+        "unknown_knowledge_point_ids": common_api.field_parser.unique_strings([]),
         "current_confusions": common_api.field_parser.text_value(),
         "additional_requirements": common_api.field_parser.text_value(),
     })
@@ -54,20 +56,26 @@ def parse_profile_payload(payload: dict[str, Any]) -> dict[str, Any]:
     })
     values = common_api.schema_validator.validate_fields(normalized, PROFILE_SCHEMA)
     values["preferences"] = common_api.schema_validator.validate_fields(preferences, PREFERENCE_SCHEMA)
-    note_skills = [item.strip() for item in re.split(r"[,，、;；]", values["known_skill_note"]) if item.strip()]
-    values["known_skill_ids"] = list(dict.fromkeys([*values["known_skill_ids"], *note_skills]))
-    values["known_skill_note"] = ", ".join(note_skills)
+    note_knowledge_points = [item.strip() for item in re.split(r"[,，、;；]", values["known_knowledge_point_note"]) if item.strip()]
+    values["known_knowledge_point_ids"] = list(dict.fromkeys([*values["known_knowledge_point_ids"], *note_knowledge_points]))
+    values["known_knowledge_point_note"] = ", ".join(note_knowledge_points)
     return values
 
 
-def normalize_profile(payload: dict[str, Any]):
+def normalize_profile(payload: dict[str, Any], all_knowledge_point_ids: list[str] | None = None):
     """Validate and normalize an incoming learner profile payload."""
     from .models import LearnerProfile
 
-    return LearnerProfile.from_dict(parse_profile_payload(payload))
+    values = parse_profile_payload(payload)
+    if all_knowledge_point_ids is not None:
+        canonical = list(dict.fromkeys(str(item) for item in all_knowledge_point_ids if item))
+        known = set(values["known_knowledge_point_ids"])
+        values["known_knowledge_point_ids"] = [item for item in canonical if item in known]
+        values["unknown_knowledge_point_ids"] = [item for item in canonical if item not in known]
+    return LearnerProfile.from_dict(values)
 
 
-def apply_profile_corrections(draft: dict[str, Any], corrections: dict[str, Any]):
+def apply_profile_corrections(draft: dict[str, Any], corrections: dict[str, Any], all_knowledge_point_ids: list[str] | None = None):
     """Merge user corrections and run the same canonical field pipeline."""
     from .models import LearnerProfile
 
@@ -81,4 +89,4 @@ def apply_profile_corrections(draft: dict[str, Any], corrections: dict[str, Any]
         if not isinstance(corrected, dict):
             raise ValidationAppError("preferences must be a JSON object", details={"field": "preferences"})
         merged["preferences"] = {**original, **corrected}
-    return normalize_profile(merged)
+    return normalize_profile(merged, all_knowledge_point_ids)

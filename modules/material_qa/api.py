@@ -29,6 +29,7 @@ def build_router(workflow: MaterialQaWorkflow) -> APIRouter:
     def answer_response(answer: MaterialQaAnswer, request_id: str) -> dict[str, Any]:
         return {
             "answer": answer.answer,
+            "refused": answer.refused,
             "citations": answer.citations,
             "related_knowledge_points": answer.related_knowledge_points,
             "recommended_action": answer.recommended_action,

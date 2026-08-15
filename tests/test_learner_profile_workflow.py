@@ -13,8 +13,8 @@ def profile_payload(background: str = " 学过 Python ") -> dict:
         "learning_domain": "machine_learning",
         "background": background,
         "self_assessed_level": "basic",
-        "known_skill_ids": ["python", "python"],
-        "known_skill_note": "NumPy，NumPy",
+        "known_knowledge_point_ids": ["python", "python"],
+        "known_knowledge_point_note": "NumPy，NumPy",
         "current_confusions": " 过拟合 ",
         "additional_requirements": " 结合代码 ",
         "preferences": {
@@ -49,7 +49,7 @@ class LearnerProfileWorkflowTest(unittest.TestCase):
             draft = workflow.start(profile_payload())
             saved = workflow.review(draft["workflow_id"], action="approve")
             self.assertEqual(saved.background, "学过 Python")
-            self.assertEqual(saved.known_skill_ids, ["python", "NumPy"])
+            self.assertEqual(saved.known_knowledge_point_ids, ["python", "NumPy"])
             self.assertEqual(repository.get("user_001", "machine_learning").current_confusions, "过拟合")
 
     def test_edit_reprocesses_fields_and_replaces_existing_profile(self) -> None:
@@ -58,7 +58,7 @@ class LearnerProfileWorkflowTest(unittest.TestCase):
             first = workflow.start(profile_payload("旧背景"))
             workflow.review(first["workflow_id"], action="approve")
             second = workflow.start(profile_payload("临时背景"))
-            saved = workflow.review(second["workflow_id"], action="edit", corrections={"background": " 新背景 ", "known_skill_ids": []})
+            saved = workflow.review(second["workflow_id"], action="edit", corrections={"background": " 新背景 ", "known_knowledge_point_ids": []})
             self.assertEqual(saved.background, "新背景")
             self.assertEqual(repository.get("user_001", "machine_learning").background, "新背景")
 

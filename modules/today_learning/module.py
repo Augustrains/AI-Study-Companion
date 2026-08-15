@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from modules.common.errors import ResourceNotFoundError
-from modules.diagnosis.diagnosis_workflow import DiagnosisWorkflow
+from modules.diagnosis.workflow import DiagnosisWorkflow
 from modules.learning_plan.module import LearningPlanModule
 from modules.learning_record.models import LearningActivity
 from modules.learning_record.module import LearningRecordModule

@@ -4,7 +4,7 @@
 JSON 存储工具和公共数据模型。
 """
 
-from . import config, csv_storage, errors, field_parser, json_storage, models, schema_validator, serialization
+from . import config, csv_storage, errors, field_parser, json_storage, knowledge_points, models, schema_validator, serialization
 
 # 明确声明 common 模块对外提供的子模块，便于调用方统一导入。
-__all__ = ["config", "csv_storage", "errors", "field_parser", "json_storage", "models", "schema_validator", "serialization"]
+__all__ = ["config", "csv_storage", "errors", "field_parser", "json_storage", "knowledge_points", "models", "schema_validator", "serialization"]

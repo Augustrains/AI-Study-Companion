@@ -18,6 +18,10 @@ def build_router(module: LearnerProfileWorkflow) -> APIRouter:
         profile = module.get(user_id.strip(), learning_domain.strip() or None)
         return {"exists": profile is not None, "profile": profile.to_dict() if profile else None}
 
+    @router.get("/knowledge-points")
+    def get_knowledge_points(learning_domain: str = Query(..., min_length=1)) -> dict[str, Any]:
+        return {"learningDomain": learning_domain, "knowledgePoints": module.knowledge_points(learning_domain)}
+
     @router.post("/workflows", status_code=201)
     def start_workflow(payload: ProfileWorkflowStartRequest) -> dict[str, Any]:
         try:

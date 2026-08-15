@@ -95,14 +95,13 @@ class LearningRecordModule:
             description=f"{diagnosis.learning_goal} · 正确 {correct_count}/{total_count}",
             occurred_at=now,
             book_id=diagnosis.book_id,
-            diagnostic_id=diagnosis.diagnosis_id,
             result={
                 "accuracy": accuracy,
                 "correct_count": correct_count,
                 "total_count": total_count,
                 "knowledge_point_results": result_items,
             },
-            detail={"answer_records": diagnosis.answer_records},
+            detail={"diagnosis_id": diagnosis.diagnosis_id, "answer_records": diagnosis.answer_records},
             client_request_id=activity_id,
             source="diagnosis",
         )
@@ -137,7 +136,6 @@ class LearningRecordModule:
             description="围绕学习资料进行多轮问答",
             occurred_at=now,
             book_id=book_id,
-            qa_conversation_id=conversation_id,
             result={"message_count": 0},
             detail={"conversation_id": conversation_id},
             client_request_id=activity_id,
