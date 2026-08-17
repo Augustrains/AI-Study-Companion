@@ -187,7 +187,7 @@ class MaterialQaService:
             "answer": answer.answer,
             "refused": answer.refused,
             "citations": [
-                citation.model_dump(by_alias=False) for citation in answer.citations
+                citation.model_dump(by_alias=True) for citation in answer.citations
             ],
             "related_knowledge_points": list(answer.related_knowledge_points),
             "recommended_action": answer.recommended_action,
@@ -272,6 +272,68 @@ class MaterialQaService:
             question=question,
             answer=answer,
         )
+
+    def conversation_history(
+        self,
+        *,
+        conversation_id: str,
+        book_id: str,
+        actor_user_id: str,
+    ) -> list[dict[str, object]]:
+        if self.conversations is None:
+            conversation = self.require_conversation(
+                conversation_id,
+                book_id,
+                actor_user_id=actor_user_id,
+            )
+            return [
+                {
+                    "role": message.role,
+                    "content": message.content,
+                    "request_id": None,
+                    "created_at": message.created_at,
+                    "citations": [],
+                }
+                for message in conversation.messages
+            ]
+
+        messages = self.conversations.messages(
+            conversation_id,
+            actor_user_id=actor_user_id,
+            book_id=book_id,
+        )
+        history = []
+        for message in messages:
+            if message.role not in {"user", "assistant"}:
+                continue
+            citations: list[MaterialQaSource] = []
+            if message.role == "assistant" and message.request_id:
+                try:
+                    turn = self.conversations.turn(
+                        conversation_id,
+                        actor_user_id=actor_user_id,
+                        book_id=book_id,
+                        request_id=message.request_id,
+                    )
+                    if turn.status == "completed":
+                        citations = self.answer_from_payload(
+                            conversation_id=conversation_id,
+                            request_id=message.request_id,
+                            payload=turn.response,
+                        ).citations
+                except ResourceNotFoundError:
+                    # 兼容引入 durable turn 之前的旧消息。
+                    citations = []
+            history.append(
+                {
+                    "role": message.role,
+                    "content": message.content,
+                    "request_id": message.request_id,
+                    "created_at": message.created_at,
+                    "citations": citations,
+                }
+            )
+        return history
 
     # 业务校验
     def require_conversation(

@@ -27,7 +27,10 @@ from modules.learning_record.module import LearningRecordModule
 from modules.material_qa.agent import MaterialQaAgent
 from modules.material_qa.services import MaterialQaService, QdrantMaterialRetriever
 from modules.material_qa.workflow import MaterialQaWorkflow
-from modules.memory.legacy_migration import migrate_legacy_profiles_to_context_memory
+from modules.memory.legacy_migration import (
+    migrate_legacy_memory_to_sql,
+    migrate_legacy_profiles_to_context_memory,
+)
 from modules.memory.module import MemoryModule
 from modules.memory.sql_repository import SqlMemoryRepository
 from modules.persistence.checkpoints import CheckpointResource
@@ -73,7 +76,10 @@ def build_api_dependencies(
     settings: common_api.config.Settings | None = None,
 ) -> ApiDependencies:
     settings = settings or common_api.config.Settings.from_env()
-    database = Database(settings.database_url, create_schema=True)
+    database = Database(
+        settings.database_url,
+        create_schema=settings.auto_create_schema,
+    )
     checkpoints: CheckpointResource | None = None
     try:
         checkpoints = CheckpointResource.open(
@@ -100,6 +106,12 @@ def _build_api_dependencies(
         common_api.json_storage.JsonStore(),
     )
     memory_module = MemoryModule(SqlMemoryRepository(database))
+    if settings.memory_path.exists():
+        migrate_legacy_memory_to_sql(
+            database=database,
+            memory=memory_module,
+            memory_path=settings.memory_path,
+        )
     if settings.profile_path.exists():
         migrate_legacy_profiles_to_context_memory(
             database=database,

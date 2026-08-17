@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
 class MaterialQaSource(BaseModel):
     """可追溯的资料引用，前端用于展示来源卡片。"""
+
+    model_config = ConfigDict(populate_by_name=True)
 
     id: str
     type: str
@@ -65,3 +69,21 @@ class AskMaterialQuestionResponse(BaseModel):
     recommended_action: str | None = Field(default=None, alias="recommendedAction")
     conversation_id: str = Field(alias="conversationId")
     request_id: str = Field(alias="requestId")
+
+
+class MaterialQaHistoryMessageResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    role: Literal["user", "assistant"]
+    content: str
+    request_id: str | None = Field(default=None, alias="requestId")
+    created_at: str = Field(alias="createdAt")
+    citations: list[MaterialQaSource] = Field(default_factory=list)
+
+
+class MaterialQaConversationHistoryResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    conversation_id: str = Field(alias="conversationId")
+    book_id: str = Field(alias="bookId")
+    messages: list[MaterialQaHistoryMessageResponse]

@@ -1,6 +1,8 @@
 # 资料问答 API
 
-当前实现：会话和消息只保存在 `MaterialQaWorkflow` 的运行时内存中，服务重启后清空；PDF 检索由 LlamaIndex + Qdrant + embedding 模型完成，检索结果再传给 Agent。
+当前应用链路将会话、消息、摘要和幂等 turn 持久化到 SQL，服务重启后可以恢复。Markdown 教材由 LangChain splitter 建索引，Qdrant + embedding 模型负责检索；检索结果与有界 Context 分开组装后再传给 Agent。
+
+生产模式以 `Authorization: Bearer <JWT>` 的 `sub` 为用户身份。本地开发模式才允许 `X-User-Id`；body 中的 `userId` 只是兼容字段，不能覆盖当前身份。
 
 ## 0. 创建会话
 
@@ -37,6 +39,7 @@
 | `bookId` | 书籍 ID | string | 是 |
 | `question` | 用户问题 | string | 是 |
 | `userId` | 用户 ID | string | 否 |
+| `requestId` | 本轮幂等 ID；同一次网络重试必须复用 | string | 建议是 |
 | `sourceIds` | 指定资料来源 ID | string[] | 否 |
 
 ### 输出字段
@@ -50,9 +53,29 @@
 | `conversationId` | 会话 ID | string |
 | `requestId` | 请求追踪 ID | string |
 
-本接口每次会将当前会话中已有的历史消息和本轮问题一起传给 Agent，并保存 user、assistant 两条消息。
+后端会按 Context Policy 选择摘要和最近消息，不会把无限历史直接发给 Agent。`requestId` 已完成时直接返回原结果；失败重试会复用同一 turn，成功后原子保存相邻的 user、assistant 两条消息。
 
-## 2. 兼容接口：提交问题
+## 2. 恢复会话历史
+
+- 操作：读取当前用户、当前教材下的持久化消息与引用
+- URL：`GET /api/rag/conversations/{conversationId}/messages?bookId={bookId}`
+
+### 输出字段
+
+| 英文字段 | 中文含义 | 类型 |
+|---|---|---|
+| `conversationId` | 会话 ID | string |
+| `bookId` | 书籍 ID | string |
+| `messages` | 按顺序返回的 user/assistant 消息 | object[] |
+| `messages[].role` | `user` 或 `assistant` | string |
+| `messages[].content` | 消息内容 | string |
+| `messages[].requestId` | 所属幂等 turn ID | string/null |
+| `messages[].createdAt` | 创建时间 | string |
+| `messages[].citations` | assistant 消息的持久化引用 | object[] |
+
+不存在、教材不匹配或资源不属于当前用户时统一按资源不可见处理。
+
+## 3. 兼容接口：提交问题
 
 - 操作：发送资料问答
 - URL：`POST /api/rag/ask`
@@ -67,6 +90,7 @@
 | `question` | 用户问题 | string | 是 |
 | `userId` | 用户 ID | string | 否 |
 | `conversationId` | 对话 ID，用于连续追问 | string | 否 |
+| `requestId` | 本轮幂等 ID；重试时复用 | string | 否 |
 | `sourceIds` | 指定资料来源 ID | string[] | 否 |
 
 ### 输入示例
@@ -77,6 +101,7 @@
   "question": "如何判断模型出现了过拟合？",
   "userId": "user_001",
   "conversationId": "qa-existing-001",
+  "requestId": "qa-client-stable-001",
   "sourceIds": ["ml-s1", "ml-s2"]
 }
 ```
@@ -118,7 +143,7 @@
 }
 ```
 
-## 2. 错误输出
+## 4. 错误输出
 
 | 英文字段 | 中文含义 | 类型 |
 |---|---|---|

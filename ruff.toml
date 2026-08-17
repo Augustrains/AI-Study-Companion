@@ -1,0 +1,7 @@
+target-version = "py311"
+
+[lint]
+# Keep the repository-wide gate stable across Ruff releases.  Broader style
+# families can be enabled incrementally without turning existing style debt
+# into an unrelated release blocker.
+select = ["E4", "E7", "E9", "F"]

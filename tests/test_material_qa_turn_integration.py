@@ -3,11 +3,15 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
+from modules.common.auth import IdentityResolver
 from modules.common.errors import ConflictError
 from modules.conversation.repository import SqlConversationRepository
 from modules.conversation.service import ConversationService
 from modules.material_qa.agent import MaterialQaAgent
+from modules.material_qa.api import build_router
 from modules.material_qa.models import MaterialQaRetrievalResult
 from modules.material_qa.services import MaterialQaService
 from modules.material_qa.workflow import MaterialQaWorkflow
@@ -143,4 +147,52 @@ def test_failed_agent_turn_can_retry_without_partial_messages(tmp_path: Path) ->
     assert client.calls == 2
     assert turn.status == "completed"
     assert turn.attempt_count == 2
+    database.close()
+
+
+def test_material_qa_api_returns_stable_request_and_restorable_history(
+    tmp_path: Path,
+) -> None:
+    database = Database(
+        f"sqlite+pysqlite:///{tmp_path / 'qa-api.sqlite3'}",
+        create_schema=True,
+    )
+    qa_workflow = workflow(database, CountingClient())
+    app = FastAPI()
+    app.include_router(
+        build_router(
+            qa_workflow,
+            IdentityResolver(allow_dev_identity=True),
+        )
+    )
+    client = TestClient(app)
+    headers = {"X-User-Id": "alice"}
+    created = client.post(
+        "/api/rag/conversations",
+        headers=headers,
+        json={"bookId": "ml", "userId": "alice"},
+    )
+    conversation_id = created.json()["conversationId"]
+
+    asked = client.post(
+        f"/api/rag/conversations/{conversation_id}/messages",
+        headers=headers,
+        json={
+            "bookId": "ml",
+            "question": "explain",
+            "requestId": "qa-api-request",
+        },
+    )
+    history = client.get(
+        f"/api/rag/conversations/{conversation_id}/messages?bookId=ml",
+        headers=headers,
+    )
+
+    assert asked.status_code == 200
+    assert asked.json()["requestId"] == "qa-api-request"
+    assert history.status_code == 200
+    assert [item["role"] for item in history.json()["messages"]] == [
+        "user",
+        "assistant",
+    ]
     database.close()

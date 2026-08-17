@@ -167,6 +167,15 @@ def test_tutor_final_prompt_keeps_recent_dialogue_and_fits_rag_context(
     visible_chunk_count = len(payload["external"]["retrieval_chunks"])
     assert 0 < visible_chunk_count < 5
     assert len(answer.citations) == visible_chunk_count
+    restored = workflow.conversation_history(
+        conversation_id=conversation.conversation_id,
+        book_id="ml",
+        actor_user_id="alice",
+    )
+    assert [item["role"] for item in restored[-2:]] == ["user", "assistant"]
+    assert len(restored[-1]["citations"]) == visible_chunk_count
+    assert restored[-1]["citations"][0].knowledge_point_ids == ["kp-0"]
+    assert restored[-1]["citations"][0].book_id == "ml"
     assert "identity" not in payload["context"]
     assert "trace" not in payload["context"]
     assert "constraints" not in payload["context"]

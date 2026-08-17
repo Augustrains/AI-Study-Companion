@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from modules.common.auth import CurrentUser, IdentityResolver
 
@@ -12,6 +12,7 @@ from .schemas import (
     AskMaterialQuestionResponse,
     CreateMaterialQaConversationRequest,
     CreateMaterialQaConversationResponse,
+    MaterialQaConversationHistoryResponse,
 )
 from .workflow import MaterialQaWorkflow
 
@@ -75,6 +76,25 @@ def build_router(
             request_id=payload.request_id,
         )
         return answer_response(result)
+
+    @router.get(
+        "/api/rag/conversations/{conversation_id}/messages",
+        response_model=MaterialQaConversationHistoryResponse,
+    )
+    def get_conversation_messages(
+        conversation_id: str,
+        book_id: str = Query(alias="bookId", min_length=1),
+        current_user: CurrentUser = current_user_dependency,
+    ) -> dict[str, Any]:
+        return {
+            "conversation_id": conversation_id,
+            "book_id": book_id,
+            "messages": workflow.conversation_history(
+                conversation_id=conversation_id,
+                book_id=book_id,
+                actor_user_id=current_user.user_id,
+            ),
+        }
 
     @router.post("/api/rag/ask", response_model=AskMaterialQuestionResponse)
     def ask_material_question(

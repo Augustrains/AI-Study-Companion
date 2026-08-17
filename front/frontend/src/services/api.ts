@@ -73,6 +73,7 @@ export type TodayLearningResponse = {
 export type QaConversation = { conversationId: string; bookId: BookId; userId: string; createdAt: string; status: string };
 export type QaQuestionPayload = { bookId: BookId; question: string; conversationId?: string; requestId?: string; sources?: Source[] };
 export type QaResult = { answer: string; refused: boolean; citations: Source[]; relatedKnowledgePoints?: string[]; recommendedAction?: string; conversationId?: string; requestId?: string };
+export type QaConversationHistory = { conversationId: string; bookId: BookId; messages: Array<{ role: "user" | "assistant"; content: string; requestId?: string | null; createdAt: string; citations: Source[] }> };
 export type MaterialLearningPlanPayload = { bookId: BookId; title: string; goal: string; description: string; minutes: number; expectedCompletionDate: string; resources: Source[] };
 export type LearningActivity = {
   id: string;
@@ -141,7 +142,7 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 const wait = (duration = 420) => new Promise((resolve) => window.setTimeout(resolve, duration));
-const newRequestId = () => typeof crypto !== "undefined" && "randomUUID" in crypto ? `qa-${crypto.randomUUID()}` : `qa-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+export const createQaRequestId = () => typeof crypto !== "undefined" && "randomUUID" in crypto ? `qa-${crypto.randomUUID()}` : `qa-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
 /**
  * 页面演示使用的模拟服务。它与真实接口保持同一组动作名称，后端接入时只替换服务实现。
@@ -150,6 +151,10 @@ export const mockApi = {
   async createConversation(bookId: BookId): Promise<QaConversation> {
     await wait(260);
     return { conversationId: `mock-qa-${Date.now()}`, bookId, userId: currentUserId(), createdAt: new Date().toISOString(), status: "active" };
+  },
+  async getConversationMessages(conversationId: string, bookId: BookId): Promise<QaConversationHistory> {
+    await wait(180);
+    return { conversationId, bookId, messages: [] };
   },
   async startDiagnostic(bookId: BookId): Promise<DiagnosticStartResult> {
     await wait();
@@ -252,6 +257,7 @@ export const mockApi = {
  */
 export const realApi = {
   createConversation: (bookId: BookId) => request<QaConversation>("/rag/conversations", { method: "POST", body: JSON.stringify({ bookId, userId: currentUserId() }) }),
+  getConversationMessages: (conversationId: string, bookId: BookId) => request<QaConversationHistory>(`/rag/conversations/${encodeURIComponent(conversationId)}/messages?bookId=${encodeURIComponent(bookId)}`),
   startDiagnostic: (bookId: BookId, learningGoal?: string) => request<DiagnosticStartResult>("/diagnostics/start", { method: "POST", body: JSON.stringify({ bookId, learningGoal }) }),
   submitDiagnosticAnswer: (diagnosticId: string, payload: { questionId: string; answer: string; skipped?: boolean }) => request(`/diagnostics/${diagnosticId}/answers`, { method: "POST", body: JSON.stringify(payload) }),
   finishDiagnostic: (diagnosticId: string) => request<DiagnosticResult>(`/diagnostics/${diagnosticId}/finish`, { method: "POST" }),
@@ -270,7 +276,7 @@ export const realApi = {
     if (params?.category && params.category !== "all") query.set("category", params.category);
     return request<LearningActivityList>(`/learning-records?${query.toString()}`);
   },
-  askQuestion: (payload: QaQuestionPayload) => request<QaResult>(`/rag/conversations/${encodeURIComponent(payload.conversationId ?? "")}/messages`, { method: "POST", body: JSON.stringify({ bookId: payload.bookId, question: payload.question, userId: currentUserId(), requestId: payload.requestId ?? newRequestId() }) }),
+  askQuestion: (payload: QaQuestionPayload) => request<QaResult>(`/rag/conversations/${encodeURIComponent(payload.conversationId ?? "")}/messages`, { method: "POST", body: JSON.stringify({ bookId: payload.bookId, question: payload.question, userId: currentUserId(), requestId: payload.requestId ?? createQaRequestId() }) }),
   getLearnerProfile: (userId: string, learningDomain: string) => request<LearnerProfileResult>(`/learner-profile?user_id=${encodeURIComponent(userId)}&learning_domain=${encodeURIComponent(learningDomain)}`),
   getKnowledgePoints: (learningDomain: string) => request<KnowledgePointResult>(`/learner-profile/knowledge-points?learning_domain=${encodeURIComponent(learningDomain)}`),
   saveLearnerProfile: async (payload: LearnerProfilePayload) => {

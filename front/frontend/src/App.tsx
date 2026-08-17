@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Icon, type IconName } from "./components/Icon";
 import { LearnerProfileView } from "./components/LearnerProfileView";
-import { api, type ApiError, type DiagnosticResult, type LearningActivity, type LearningPlanResult, type TodayLearningResponse } from "./services/api";
+import { api, createQaRequestId, currentUserId, type ApiError, type DiagnosticResult, type LearningActivity, type LearningPlanResult, type TodayLearningResponse } from "./services/api";
 import {
   books,
   getBookContent,
@@ -34,6 +34,8 @@ const sourceChapterKey = (source: Source) => [
 const mergeSourcesByChapter = (sources: Source[]) =>
   Array.from(new Map(sources.map((source) => [sourceChapterKey(source), source])).values());
 
+const qaConversationStorageKey = (bookId: BookId) => `study-companion-qa:${currentUserId()}:${bookId}`;
+
 function toRecordItem(activity: LearningActivity): RecordItem {
   const visual = {
     profile: { tone: "violet", icon: "calendar" as const },
@@ -65,6 +67,10 @@ const statusLabels: Record<TaskStatus, string> = {
 };
 
 const errorMessage = (error: unknown) => (error as ApiError)?.message ?? "操作失败，请稍后重试。";
+const isMissingConversationError = (error: unknown) => {
+  const code = (error as ApiError)?.code;
+  return code === "RESOURCE_NOT_FOUND" || code === "HTTP_404";
+};
 
 function App() {
   const [activeNav, setActiveNav] = useState<NavKey>("today");
@@ -102,6 +108,9 @@ function App() {
   const [qaSources, setQaSources] = useState<Source[]>([]);
   const [qaConversationId, setQaConversationId] = useState<string | null>(null);
   const [qaConversationBusy, setQaConversationBusy] = useState(false);
+  const [qaRetry, setQaRetry] = useState<{ question: string; requestId: string } | null>(null);
+  const [qaNeedsInitializationRetry, setQaNeedsInitializationRetry] = useState(false);
+  const qaConversationGeneration = useRef(0);
 
   const currentBook = useMemo(() => books.find((book) => book.id === bookId) ?? books[0], [bookId]);
   const content = useMemo(() => getBookContent(bookId), [bookId]);
@@ -132,19 +141,52 @@ function App() {
 
   const closeModal = () => setModal(null);
 
-  const initializeQaConversation = async (nextBookId: BookId) => {
+  const initializeQaConversation = async (nextBookId: BookId, forceNew = false) => {
+    const generation = ++qaConversationGeneration.current;
     setQaConversationBusy(true);
+    setQaBusy(false);
     setQaConversationId(null);
     setQaMessages([]);
     setQaSources([]);
     setQaError(null);
+    setQaRetry(null);
+    setQaNeedsInitializationRetry(false);
     try {
+      const storageKey = qaConversationStorageKey(nextBookId);
+      const storedId = forceNew ? null : window.localStorage.getItem(storageKey);
+      if (storedId) {
+        try {
+          const history = await api.getConversationMessages(storedId, nextBookId);
+          if (qaConversationGeneration.current !== generation) return;
+          setQaConversationId(history.conversationId);
+          setQaMessages(history.messages.map((message) => ({ role: message.role, text: message.content, citations: message.citations })));
+          setQaSources(mergeSourcesByChapter(history.messages.flatMap((message) => message.citations)));
+          return;
+        } catch (error) {
+          if (qaConversationGeneration.current !== generation) return;
+          if (!isMissingConversationError(error)) {
+            // A transient backend/auth failure does not invalidate the durable
+            // conversation. Keep its pointer and let the user retry restoration.
+            setQaConversationId(storedId);
+            setQaNeedsInitializationRetry(true);
+            setQaError(errorMessage(error));
+            return;
+          }
+          window.localStorage.removeItem(storageKey);
+        }
+      }
       const conversation = await api.createConversation(nextBookId);
+      if (qaConversationGeneration.current !== generation) return;
       setQaConversationId(conversation.conversationId);
+      window.localStorage.setItem(storageKey, conversation.conversationId);
     } catch (error) {
+      if (qaConversationGeneration.current !== generation) return;
+      setQaNeedsInitializationRetry(true);
       setQaError(errorMessage(error));
     } finally {
-      setQaConversationBusy(false);
+      if (qaConversationGeneration.current === generation) {
+        setQaConversationBusy(false);
+      }
     }
   };
 
@@ -386,28 +428,39 @@ function App() {
   });
 
   const askQuestion = async () => {
-    const question = qaInput.trim();
+    const typedQuestion = qaInput.trim();
+    const question = typedQuestion || qaRetry?.question || "";
     if (!question || qaBusy || qaConversationBusy) {
       if (!question) showToast("请输入问题", "输入问题后再发送。 ");
       return;
     }
     if (!qaConversationId) {
+      setQaNeedsInitializationRetry(true);
       setQaError("问答会话尚未创建完成，请稍后重试。");
       return;
     }
     setQaInput("");
     setQaError(null);
+    setQaNeedsInitializationRetry(false);
+    const requestId = typedQuestion ? createQaRequestId() : qaRetry?.requestId ?? createQaRequestId();
+    const generation = qaConversationGeneration.current;
     setQaMessages((messages) => [...messages, { role: "user", text: question }]);
     setQaBusy(true);
     try {
-      const result = await api.askQuestion({ bookId, question, conversationId: qaConversationId, sources: content.sources });
+      const result = await api.askQuestion({ bookId, question, conversationId: qaConversationId, requestId, sources: content.sources });
+      if (qaConversationGeneration.current !== generation) return;
       setQaSources(result.citations);
-      setQaMessages((messages) => [...messages, { role: "assistant", text: question.includes("过拟合") ? content.qaAnswer : result.answer, citations: result.citations }]);
-      setQaMessages((messages) => [...messages.slice(0, -1), { role: "assistant", text: result.answer, citations: result.citations }]);
+      setQaMessages((messages) => [...messages, { role: "assistant", text: result.answer, citations: result.citations }]);
+      setQaRetry(null);
     } catch (error) {
+      if (qaConversationGeneration.current !== generation) return;
+      setQaMessages((messages) => messages.slice(0, -1));
+      setQaRetry({ question, requestId });
       setQaError(errorMessage(error));
     } finally {
-      setQaBusy(false);
+      if (qaConversationGeneration.current === generation) {
+        setQaBusy(false);
+      }
     }
   };
 
@@ -426,7 +479,7 @@ function App() {
         {activeNav === "diagnostic" && <DiagnosticView questions={diagnosticQuestions} index={diagnosticIndex} answers={diagnosticAnswers} skippedQuestions={skippedQuestions} paused={diagnosticPaused} busy={diagnosticBusy} stage={diagnosticStage} result={diagnosticResult} calibration={calibration} calibrationReason={calibrationReason} setAnswer={(id) => currentQuestion && setDiagnosticAnswers((answers) => ({ ...answers, [currentQuestion.id]: id }))} onPrevious={() => setDiagnosticIndex((index) => Math.max(0, index - 1))} onSubmit={submitDiagnostic} onSkip={skipDiagnostic} onPause={() => setDiagnosticPaused(true)} onResume={resumeDiagnostic} onCalibration={setCalibration} onReason={setCalibrationReason} onEvidence={openEvidence} onCalibrationSubmit={submitCalibration} />}
         {activeNav === "plan" && (generatedPlan ? <PlanView book={generatedPlan.book} goal={generatedPlan.goal} goalLevel={generatedPlan.goalLevel} tasks={generatedPlan.tasks.map((task) => ({ ...task, status: taskStates[task.id] ?? task.status }))} advice={generatedPlan.advice} resources={generatedPlan.resources} tab={planTab} setTab={setPlanTab} onOpenTask={openTask} onAdjustGoal={openGoalEditor} onOpenSource={openSource} /> : <PlanEmptyView onStartDiagnostic={startDiagnostic} />)}
         {activeNav === "records" && <RecordsView records={records} total={recordTotal} page={recordPage} pageSize={recordPageSize} loading={recordsLoading} filter={recordFilter} setFilter={changeRecordFilter} onPageChange={setRecordPage} onOpenRecord={openRecord} onReview={() => startDiagnostic()} />}
-        {activeNav === "qa" && <QaView book={currentBook} sources={qaSources} messages={qaMessages} value={qaInput} busy={qaBusy} error={qaError} onChange={setQaInput} onAsk={askQuestion} onNew={() => void initializeQaConversation(bookId)} onOpenSource={openSource} onAddPlan={openMaterialPlanEditor} />}
+        {activeNav === "qa" && <QaView book={currentBook} sources={qaSources} messages={qaMessages} value={qaInput} busy={qaBusy} error={qaError} onChange={setQaInput} onAsk={askQuestion} onRetry={qaNeedsInitializationRetry ? () => void initializeQaConversation(bookId) : askQuestion} retryLabel={qaNeedsInitializationRetry ? "重新加载" : "重新发送"} onNew={() => void initializeQaConversation(bookId, true)} onOpenSource={openSource} onAddPlan={openMaterialPlanEditor} />}
       </main>
 
       {toast && <div className="toast" role="status"><div className="toast-icon"><Icon name="check" size={17} /></div><div><strong>{toast.title}</strong><span>{toast.message}</span></div></div>}
@@ -518,10 +571,10 @@ function RecordsView({ records, total, page, pageSize, loading, filter, setFilte
   return <div className="page-stack"><PageHeader eyebrow="学习事件 · 可追溯" title="学习记录" description="查看人物画像、资料问答、能力诊断和学习任务活动。" action={<label className="filter-select"><Icon name="filter" size={15} /><select value={filter} onChange={(event) => setFilter(event.target.value as typeof filter)} aria-label="筛选学习记录"><option value="all">全部记录</option><option value="profile">人物画像</option><option value="task">学习任务</option><option value="diagnostic">能力诊断</option><option value="qa">资料问答</option></select></label>} /><section className="records-layout"><article className="card record-timeline"><div className="card-heading"><span>最近活动</span><span className="completion">{loading ? "正在加载" : `共 ${total} 个结果`}</span></div>{loading ? <EmptyState text="正在加载学习记录" /> : records.length === 0 ? <EmptyState text="暂时没有符合条件的记录" /> : records.map((item) => <div className="record-item" key={item.id}><div className={`record-icon ${item.tone}`}><Icon name={item.icon} size={16} /></div><div className="record-copy"><strong>{item.title}</strong><p>{item.description}</p><span>{item.time}</span></div><button className="icon-button" onClick={() => onOpenRecord(item)} aria-label="查看记录详情"><Icon name="chevron-right" size={17} /></button></div>)}{total > pageSize && <div className="record-pagination" aria-label="学习记录分页">{Array.from({ length: pageCount }, (_, index) => index + 1).map((pageNumber) => <button key={pageNumber} className={pageNumber === page ? "active" : ""} onClick={() => onPageChange(pageNumber)} disabled={loading}>{pageNumber}</button>)}</div>}</article>{records.length > 0 && <article className="card review-card"><div className="card-heading"><span>待复测</span><span className="status-pill warning">后端返回后显示</span></div><p>完成诊断后，系统会根据能力状态返回复测安排。</p><div className="review-item"><div><strong>开始复测</strong><span>重新检查当前知识点掌握情况</span></div><button className="secondary-button" onClick={onReview}>去复测</button></div></article>}</section></div>;
 }
 
-function QaView({ book, sources, messages, value, busy, error, onChange, onAsk, onNew, onOpenSource, onAddPlan }: { book: Book; sources: Source[]; messages: QaMessage[]; value: string; busy: boolean; error: string | null; onChange: (value: string) => void; onAsk: () => void; onNew: () => void; onOpenSource: (source: Source) => void; onAddPlan: () => void }) {
+function QaView({ book, sources, messages, value, busy, error, onChange, onAsk, onRetry, retryLabel, onNew, onOpenSource, onAddPlan }: { book: Book; sources: Source[]; messages: QaMessage[]; value: string; busy: boolean; error: string | null; onChange: (value: string) => void; onAsk: () => void; onRetry: () => void; retryLabel: string; onNew: () => void; onOpenSource: (source: Source) => void; onAddPlan: () => void }) {
   const sourceBookTitle = (source: Source) => books.find((item) => item.id === source.bookId)?.title ?? book.title;
   const uniqueSources = mergeSourcesByChapter(sources);
-  return <div className="page-stack"><PageHeader eyebrow="资料驱动 · 保留引用" title="资料问答" description="围绕当前学习内容和学习目标提问，回答会保留资料出处。" action={<button className="outline-button" onClick={onNew}>新建对话 <Icon name="plus" size={15} /></button>} /><section className="qa-layout"><article className="card conversation-card"><div className="conversation-head"><div><span className="section-label">当前范围</span><strong>{book.title} · {book.subtitle}</strong></div><span className="status-pill blue">已绑定知识点</span></div><div className="message-list">{messages.map((message, index) => <div className={`message ${message.role}`} key={`${message.role}-${index}`}><span className="message-avatar">{message.role === "assistant" ? "✦" : "我"}</span><div><p>{message.text}</p>{message.role === "assistant" && <div className="citation-row">{mergeSourcesByChapter(message.citations ?? sources).map((source) => <button key={sourceChapterKey(source)} onClick={() => onOpenSource(source)}><Icon name="file" size={14} /><span><strong>{sourceBookTitle(source)} · {source.contentUnitId || source.title}</strong><small>{source.location}</small></span><Icon name="chevron-right" size={14} /></button>)}</div>}</div></div>)}{busy && <div className="message assistant"><span className="message-avatar">✦</span><div className="typing-state">正在查找相关资料…</div></div>}{error && <div className="inline-error" role="alert"><Icon name="info" size={16} /><span>{error}</span><button onClick={onAsk}>重新发送</button></div>}</div><div className="chat-composer"><textarea value={value} onChange={(event) => onChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); onAsk(); } }} placeholder="继续提问（Shift + Enter 换行）" rows={2} /><button className="send-button" onClick={onAsk} disabled={busy} aria-label="发送问题"><Icon name="send" size={17} /></button></div><div className="suggestion-row"><button onClick={() => onChange("这个概念如何举例？")}>这个概念如何举例？</button><button onClick={() => onChange("需要哪些前置知识？")}>需要哪些前置知识？</button></div></article><aside className="card source-card"><div className="card-heading"><span>来源详情</span><Icon name="info" size={17} /></div>{uniqueSources.length === 0 ? <div className="source-empty">提问后显示检索到的资料来源</div> : uniqueSources.map((source) => <button className="source-block" key={sourceChapterKey(source)} onClick={() => onOpenSource(source)}><Icon name="file" size={15} /><strong>{sourceBookTitle(source)} · {source.contentUnitId || source.title}</strong></button>)}{uniqueSources.length > 0 && <button className="secondary-button full" onClick={onAddPlan}>加入学习计划 <Icon name="plus" size={15} /></button>}</aside></section></div>;
+  return <div className="page-stack"><PageHeader eyebrow="资料驱动 · 保留引用" title="资料问答" description="围绕当前学习内容和学习目标提问，回答会保留资料出处。" action={<button className="outline-button" onClick={onNew}>新建对话 <Icon name="plus" size={15} /></button>} /><section className="qa-layout"><article className="card conversation-card"><div className="conversation-head"><div><span className="section-label">当前范围</span><strong>{book.title} · {book.subtitle}</strong></div><span className="status-pill blue">已绑定知识点</span></div><div className="message-list">{messages.map((message, index) => <div className={`message ${message.role}`} key={`${message.role}-${index}`}><span className="message-avatar">{message.role === "assistant" ? "✦" : "我"}</span><div><p>{message.text}</p>{message.role === "assistant" && <div className="citation-row">{mergeSourcesByChapter(message.citations ?? sources).map((source) => <button key={sourceChapterKey(source)} onClick={() => onOpenSource(source)}><Icon name="file" size={14} /><span><strong>{sourceBookTitle(source)} · {source.contentUnitId || source.title}</strong><small>{source.location}</small></span><Icon name="chevron-right" size={14} /></button>)}</div>}</div></div>)}{busy && <div className="message assistant"><span className="message-avatar">✦</span><div className="typing-state">正在查找相关资料…</div></div>}{error && <div className="inline-error" role="alert"><Icon name="info" size={16} /><span>{error}</span><button onClick={onRetry}>{retryLabel}</button></div>}</div><div className="chat-composer"><textarea value={value} onChange={(event) => onChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); onAsk(); } }} placeholder="继续提问（Shift + Enter 换行）" rows={2} /><button className="send-button" onClick={onAsk} disabled={busy} aria-label="发送问题"><Icon name="send" size={17} /></button></div><div className="suggestion-row"><button onClick={() => onChange("这个概念如何举例？")}>这个概念如何举例？</button><button onClick={() => onChange("需要哪些前置知识？")}>需要哪些前置知识？</button></div></article><aside className="card source-card"><div className="card-heading"><span>来源详情</span><Icon name="info" size={17} /></div>{uniqueSources.length === 0 ? <div className="source-empty">提问后显示检索到的资料来源</div> : uniqueSources.map((source) => <button className="source-block" key={sourceChapterKey(source)} onClick={() => onOpenSource(source)}><Icon name="file" size={15} /><strong>{sourceBookTitle(source)} · {source.contentUnitId || source.title}</strong></button>)}{uniqueSources.length > 0 && <button className="secondary-button full" onClick={onAddPlan}>加入学习计划 <Icon name="plus" size={15} /></button>}</aside></section></div>;
 }
 
 function TaskRow({ task, onOpen }: { task: LearningTask; onOpen: () => void }) {

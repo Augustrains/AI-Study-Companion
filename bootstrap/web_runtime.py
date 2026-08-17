@@ -18,7 +18,13 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 FRONTEND_DIR = PROJECT_DIR / "front" / "frontend"
 
 
-def start_frontend(host: str, port: int, use_real_api: bool) -> subprocess.Popen[str]:
+def start_frontend(
+    host: str,
+    port: int,
+    use_real_api: bool,
+    *,
+    backend_port: int = 8000,
+) -> subprocess.Popen[str]:
     package_manager = shutil.which("pnpm") or shutil.which("pnpm.cmd") or shutil.which("npm") or shutil.which("npm.cmd")
     if not package_manager:
         raise RuntimeError("未找到 pnpm 或 npm，请先安装 Node.js。")
@@ -28,6 +34,9 @@ def start_frontend(host: str, port: int, use_real_api: bool) -> subprocess.Popen
     environment = os.environ.copy()
     environment["VITE_USE_REAL_API"] = "true" if use_real_api else "false"
     environment["VITE_API_BASE_URL"] = "/api"
+    # The backend may listen on 0.0.0.0 for browsers on the LAN, but Vite's
+    # local proxy needs a connectable target rather than the wildcard address.
+    environment["VITE_BACKEND_URL"] = f"http://127.0.0.1:{backend_port}"
     command = [package_manager, "run", "dev", "--", "--host", host, "--port", str(port)]
     logger.info("启动前端: http://%s:%s", host, port)
     return subprocess.Popen(command, cwd=FRONTEND_DIR, env=environment, text=True)
@@ -66,7 +75,12 @@ def serve_web(host: str | None = None, backend_port: int | None = None, frontend
     frontend: subprocess.Popen[str] | None = None
     try:
         logger.info("启动后端 API: http://%s:%s", host, backend_port)
-        frontend = start_frontend(host, frontend_port, use_real_api)
+        frontend = start_frontend(
+            host,
+            frontend_port,
+            use_real_api,
+            backend_port=backend_port,
+        )
         logger.info("前后端已启动，按 Ctrl+C 停止。")
         frontend.wait()
         return frontend.returncode or 0

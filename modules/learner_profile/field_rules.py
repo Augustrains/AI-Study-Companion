@@ -77,8 +77,6 @@ def normalize_profile(payload: dict[str, Any], all_knowledge_point_ids: list[str
 
 def apply_profile_corrections(draft: dict[str, Any], corrections: dict[str, Any], all_knowledge_point_ids: list[str] | None = None):
     """Merge user corrections and run the same canonical field pipeline."""
-    from .models import LearnerProfile
-
     if not isinstance(corrections, dict):
         raise ValidationAppError("corrections must be a JSON object", details={"field": "corrections"})
     merged = dict(draft)

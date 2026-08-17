@@ -5,13 +5,13 @@
 本目录使用 React + TypeScript + TSX + Vite + Tailwind CSS。
 
 ```bash
-npm install
-npm run dev
+pnpm install --frozen-lockfile
+pnpm run dev
 ```
 
 当前版本已经完成可点击前端页面演示，包含：
 
-- 学习内容：仅展示《机器学习》和《强化学习》，切换后页面内容会同步变化。
+- 学习内容：展示《机器学习》和《深度学习》，切换后页面内容会同步变化。
 - 今日学习：本周进度、今日推荐任务、能力图谱、今日任务详情。
 - 能力诊断：逐题保存、上一题、跳过、暂停、继续、提交、失败提示。
 - 测评结果：AI 评估、依据详情、用户校准和原因保存。
@@ -20,7 +20,7 @@ npm run dev
 - 资料问答：等待状态、失败重试、历史对话、资料引用、来源预览和加入计划。
 - 设置与帮助：使用弹窗预留用户偏好和产品说明模块。
 
-页面默认使用模拟服务，真实接口统一预留在 `src/services/api.ts`。设置 `VITE_USE_REAL_API=true` 后可以切换为后端接口，并通过 `VITE_API_BASE_URL` 指定后端地址。
+页面默认调用真实后端，接口统一封装在 `src/services/api.ts`。只有显式设置 `VITE_USE_REAL_API=false` 才使用 Mock。`VITE_API_BASE_URL` 指定浏览器 API 前缀；本地 Vite 代理目标由 `VITE_BACKEND_URL` 指定，`python main.py` 会自动按所选后端端口注入。
 
 后端交接说明位于上级目录的 `docs/前端交互与后端交接说明.md`。
 

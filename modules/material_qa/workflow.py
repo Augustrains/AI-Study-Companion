@@ -72,6 +72,19 @@ class MaterialQaWorkflow:
     ) -> MaterialQaConversation:
         return self.qa_service.create_conversation(book_id=book_id, user_id=user_id)
 
+    def conversation_history(
+        self,
+        *,
+        conversation_id: str,
+        book_id: str,
+        actor_user_id: str,
+    ) -> list[dict[str, object]]:
+        return self.qa_service.conversation_history(
+            conversation_id=conversation_id,
+            book_id=book_id,
+            actor_user_id=actor_user_id,
+        )
+
     def ask(
         self,
         *,

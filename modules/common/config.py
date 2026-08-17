@@ -10,6 +10,14 @@ from dotenv import load_dotenv
 
 from .errors import ConfigurationError
 
+_JWT_PLACEHOLDERS = {
+    "replace-with-a-long-random-secret",
+    "change-me",
+    "changeme",
+    "secret",
+}
+_JWT_PLACEHOLDER_PREFIXES = ("replace-with-", "paste-", "your-", "your_")
+
 
 def _bool(name: str, default: bool) -> bool:
     """读取布尔型环境变量，支持 true/false、1/0、yes/no。"""
@@ -91,6 +99,23 @@ class Settings:
         return os.getenv("STUDY_COMPANION_CHECKPOINT_URL", str(default_path))
 
     @property
+    def auto_create_schema(self) -> bool:
+        """本地演示可自动建表；部署环境应关闭并使用 Alembic。"""
+
+        allow_dev_identity = self.allow_dev_identity
+        enabled = _bool(
+            "STUDY_COMPANION_AUTO_CREATE_SCHEMA",
+            allow_dev_identity,
+        )
+        if enabled and not allow_dev_identity:
+            raise ConfigurationError(
+                "STUDY_COMPANION_AUTO_CREATE_SCHEMA must be false when "
+                "development identity is disabled",
+                details={"variable": "STUDY_COMPANION_AUTO_CREATE_SCHEMA"},
+            )
+        return enabled
+
+    @property
     def allow_dev_identity(self) -> bool:
         """是否允许未提供身份头时使用本地演示用户。"""
 
@@ -111,11 +136,23 @@ class Settings:
         """HS256 会话令牌密钥。生产模式必须配置。"""
 
         value = os.getenv("STUDY_COMPANION_JWT_SECRET", "").strip()
-        if not self.allow_dev_identity and not value:
-            raise ConfigurationError(
-                "STUDY_COMPANION_JWT_SECRET is required when dev identity is disabled",
-                details={"variable": "STUDY_COMPANION_JWT_SECRET"},
-            )
+        if not self.allow_dev_identity:
+            if not value:
+                raise ConfigurationError(
+                    "STUDY_COMPANION_JWT_SECRET is required when dev identity is disabled",
+                    details={"variable": "STUDY_COMPANION_JWT_SECRET"},
+                )
+            lowered = value.lower()
+            if (
+                len(value) < 32
+                or lowered in _JWT_PLACEHOLDERS
+                or lowered.startswith(_JWT_PLACEHOLDER_PREFIXES)
+            ):
+                raise ConfigurationError(
+                    "STUDY_COMPANION_JWT_SECRET must be a non-placeholder secret "
+                    "of at least 32 characters",
+                    details={"variable": "STUDY_COMPANION_JWT_SECRET"},
+                )
         return value or None
 
     @property
