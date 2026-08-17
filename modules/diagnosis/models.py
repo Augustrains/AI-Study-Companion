@@ -7,7 +7,6 @@ from typing import Any, TypedDict
 
 from modules.common import api as common_api
 
-
 STATUSES = ("未测评", "不会", "了解", "熟悉", "掌握")
 TASK_MODES = (
     "diagnostic",
@@ -28,6 +27,7 @@ class QuestionPlanningInput:
     knowledge_point_memory: dict[str, dict[str, Any]]
     available_question_counts: dict[str, int]
     knowledge_point_catalog: dict[str, dict[str, str]] = field(default_factory=dict)
+    context: Any | None = None
 
 
 @dataclass(frozen=True)
@@ -132,6 +132,7 @@ class DiagnosisState(TypedDict, total=False):
     learning_goal: str
     knowledge_point_mastery: dict[str, str]
     knowledge_point_memory: dict[str, dict[str, Any]]
+    context_id: str
     questions: list[dict[str, Any]]
     correct_answers: dict[str, str]
     answers: dict[str, str]

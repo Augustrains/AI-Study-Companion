@@ -6,6 +6,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 from .errors import ConfigurationError
 
 
@@ -15,7 +17,9 @@ def _bool(name: str, default: bool) -> bool:
     if value is None:
         return default
     if value.lower() not in {"true", "false", "1", "0", "yes", "no"}:
-        raise ConfigurationError(f"{name} must be a boolean", details={"variable": name})
+        raise ConfigurationError(
+            f"{name} must be a boolean", details={"variable": name}
+        )
     return value.lower() in {"true", "1", "yes"}
 
 
@@ -27,7 +31,9 @@ def _int(name: str, default: int) -> int:
     try:
         result = int(value)
     except ValueError as exc:
-        raise ConfigurationError(f"{name} must be an integer", details={"variable": name}, cause=exc) from exc
+        raise ConfigurationError(
+            f"{name} must be an integer", details={"variable": name}, cause=exc
+        ) from exc
     if result <= 0:
         raise ConfigurationError(f"{name} must be positive", details={"variable": name})
     return result
@@ -85,6 +91,40 @@ class Settings:
         return os.getenv("STUDY_COMPANION_CHECKPOINT_URL", str(default_path))
 
     @property
+    def allow_dev_identity(self) -> bool:
+        """是否允许未提供身份头时使用本地演示用户。"""
+
+        return _bool("STUDY_COMPANION_ALLOW_DEV_IDENTITY", True)
+
+    @property
+    def dev_user_id(self) -> str:
+        value = os.getenv("STUDY_COMPANION_DEV_USER_ID", "user_001").strip()
+        if not value:
+            raise ConfigurationError(
+                "STUDY_COMPANION_DEV_USER_ID must not be empty",
+                details={"variable": "STUDY_COMPANION_DEV_USER_ID"},
+            )
+        return value
+
+    @property
+    def jwt_secret(self) -> str | None:
+        """HS256 会话令牌密钥。生产模式必须配置。"""
+
+        value = os.getenv("STUDY_COMPANION_JWT_SECRET", "").strip()
+        if not self.allow_dev_identity and not value:
+            raise ConfigurationError(
+                "STUDY_COMPANION_JWT_SECRET is required when dev identity is disabled",
+                details={"variable": "STUDY_COMPANION_JWT_SECRET"},
+            )
+        return value or None
+
+    @property
+    def business_timezone(self) -> str:
+        """用于“今天”与学习日程的业务时区。"""
+
+        return os.getenv("STUDY_COMPANION_TIMEZONE", "Asia/Shanghai").strip()
+
+    @property
     def profile_path(self) -> Path:
         """返回学习者档案 JSON 文件的默认路径。"""
         return self.data_dir / "profiles" / "learner_profiles.json"
@@ -117,15 +157,29 @@ class Settings:
     def embedding_model(self) -> str:
         """资料问答使用的 Embedding 模型名称或本地路径。"""
         default_model = self.project_dir / "models" / "bge-m3"
-        return os.getenv("STUDY_COMPANION_EMBEDDING_MODEL", str(default_model) if default_model.exists() else "BAAI/bge-m3")
+        return os.getenv(
+            "STUDY_COMPANION_EMBEDDING_MODEL",
+            str(default_model) if default_model.exists() else "BAAI/bge-m3",
+        )
 
     @classmethod
-    def from_env(cls, project_dir: str | Path | None = None) -> "Settings":
+    def from_env(cls, project_dir: str | Path | None = None) -> Settings:
         """从环境变量构造配置对象。
 
         ``project_dir`` 主要用于测试或嵌入式启动场景；未传入时自动按
         当前 common 包的位置推导项目根目录。
         """
         root = Path(project_dir or Path(__file__).resolve().parents[2]).resolve()
+        # 全局配置必须在任何 os.getenv 之前加载，不应依赖更晚创建的 LLM 客户端。
+        load_dotenv(root / ".env", override=False)
         data_dir = Path(os.getenv("STUDY_COMPANION_DATA_DIR", root / "data")).resolve()
-        return cls(root, data_dir, os.getenv("STUDY_COMPANION_HOST", "127.0.0.1"), _int("STUDY_COMPANION_BACKEND_PORT", 8000), _int("STUDY_COMPANION_FRONTEND_PORT", 5173), os.getenv("STUDY_COMPANION_LOG_LEVEL", "INFO").upper(), _bool("STUDY_COMPANION_USE_REAL_API", True), _bool("STUDY_COMPANION_STORAGE_BACKUP", True))
+        return cls(
+            root,
+            data_dir,
+            os.getenv("STUDY_COMPANION_HOST", "127.0.0.1"),
+            _int("STUDY_COMPANION_BACKEND_PORT", 8000),
+            _int("STUDY_COMPANION_FRONTEND_PORT", 5173),
+            os.getenv("STUDY_COMPANION_LOG_LEVEL", "INFO").upper(),
+            _bool("STUDY_COMPANION_USE_REAL_API", True),
+            _bool("STUDY_COMPANION_STORAGE_BACKUP", True),
+        )

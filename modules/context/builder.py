@@ -73,6 +73,7 @@ class ContextBuilder:
         )
         point_filter = {str(item) for item in request.knowledge_point_ids if item}
         mastery = []
+        is_diagnosis = policy.mode is ContextMode.DIAGNOSIS
         if policy.include_verified_mastery:
             for point in learner_memory.knowledge_points:
                 assessed = point.assessed_mastery_level
@@ -82,12 +83,13 @@ class ContextBuilder:
                     continue
                 if point_filter and point.knowledge_point_id not in point_filter:
                     continue
+                calibrated = None if is_diagnosis else point.user_calibrated_level
                 mastery.append(
                     MasteryContext(
                         knowledge_point_id=point.knowledge_point_id,
                         assessed_mastery_level=assessed,
-                        user_calibrated_level=point.user_calibrated_level,
-                        effective_mastery_level=point.user_calibrated_level or assessed,
+                        user_calibrated_level=calibrated,
+                        effective_mastery_level=calibrated or assessed,
                         mastery_score=point.mastery_score,
                         confidence=point.confidence,
                         memory_status=point.memory_status,
@@ -185,7 +187,6 @@ class ContextBuilder:
             )
 
         forbidden = policy.forbidden_fields
-        is_diagnosis = policy.mode is ContextMode.DIAGNOSIS
         workflow = WorkflowContext(
             learning_goal=request.learning_goal,
             current_task=(
@@ -265,3 +266,7 @@ class ContextBuilder:
 
     def for_tutor(self, **kwargs: Any) -> ContextEnvelope:
         return self.build(ContextRequest(mode=ContextMode.TUTOR, **kwargs))
+
+    def record_trace(self, envelope: ContextEnvelope) -> None:
+        if self.traces is not None:
+            self.traces.save(envelope)

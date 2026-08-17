@@ -9,9 +9,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
-from .workflow import DiagnosisWorkflow
+from modules.common.auth import CurrentUser, IdentityResolver
+
 from .schemas import (
     DiagnosticAnswerRequest,
     DiagnosticAnswerResponse,
@@ -21,48 +22,81 @@ from .schemas import (
     DiagnosticStartRequest,
     DiagnosticStartResponse,
 )
+from .workflow import DiagnosisWorkflow
 
 # 前端简写与实际题库文件名之间的映射。
 BOOK_TO_QUESTION_BANK = {"ml": "ml-001", "dl": "dl-001"}
 
 
-def build_router(workflow: DiagnosisWorkflow) -> APIRouter:
+def build_router(
+    workflow: DiagnosisWorkflow,
+    identity: IdentityResolver | None = None,
+) -> APIRouter:
     """创建诊断路由，并将请求转交给统一诊断工作流。"""
     router = APIRouter(tags=["diagnosis"])
+    identity = identity or IdentityResolver()
+    current_user_dependency = Depends(identity)
 
     @router.post("/api/diagnostics/start", response_model=DiagnosticStartResponse)
-    def start_diagnostic(payload: DiagnosticStartRequest) -> dict[str, Any]:
+    def start_diagnostic(
+        payload: DiagnosticStartRequest,
+        current_user: CurrentUser = current_user_dependency,
+    ) -> dict[str, Any]:
         """启动诊断并返回题目；异常由全局异常处理器统一处理。"""
         book_id = BOOK_TO_QUESTION_BANK.get(payload.book_id, payload.book_id)
+        user_id = identity.require_claimed_user(current_user, payload.user_id)
         result = workflow.start_diagnosis(
-            user_id=payload.user_id,
+            user_id=user_id,
             book_id=book_id,
             learning_goal=payload.learning_goal,
         )
         return result
 
-    @router.post("/api/diagnostics/{diagnostic_id}/answers", response_model=DiagnosticAnswerResponse)
-    def submit_answer(diagnostic_id: str, payload: DiagnosticAnswerRequest) -> dict[str, Any]:
+    @router.post(
+        "/api/diagnostics/{diagnostic_id}/answers",
+        response_model=DiagnosticAnswerResponse,
+    )
+    def submit_answer(
+        diagnostic_id: str,
+        payload: DiagnosticAnswerRequest,
+        current_user: CurrentUser = current_user_dependency,
+    ) -> dict[str, Any]:
         """提交答案并返回保存结果。"""
         return workflow.submit_answer(
             diagnostic_id,
             payload.question_id,
             payload.answer,
             payload.skipped,
+            actor_user_id=current_user.user_id,
         )
 
-    @router.post("/api/diagnostics/{diagnostic_id}/finish", response_model=DiagnosticFinishResponse)
-    async def finish_diagnostic(diagnostic_id: str) -> dict[str, Any]:
+    @router.post(
+        "/api/diagnostics/{diagnostic_id}/finish",
+        response_model=DiagnosticFinishResponse,
+    )
+    async def finish_diagnostic(
+        diagnostic_id: str,
+        current_user: CurrentUser = current_user_dependency,
+    ) -> dict[str, Any]:
         """完成诊断并返回待审核摘要。"""
-        return await workflow.finish_diagnosis(diagnostic_id)
+        return await workflow.finish_diagnosis(
+            diagnostic_id,
+            actor_user_id=current_user.user_id,
+        )
 
-    @router.post("/api/learner-calibrations", response_model=DiagnosticCalibrationResponse)
-    def submit_calibration(payload: DiagnosticCalibrationRequest) -> dict[str, Any]:
+    @router.post(
+        "/api/learner-calibrations", response_model=DiagnosticCalibrationResponse
+    )
+    def submit_calibration(
+        payload: DiagnosticCalibrationRequest,
+        current_user: CurrentUser = current_user_dependency,
+    ) -> dict[str, Any]:
         """提交用户校准结果并返回保存状态。"""
         result = workflow.confirm_diagnosis(
             payload.diagnostic_id,
             calibration=payload.level,
             reason=payload.reason,
+            actor_user_id=current_user.user_id,
         )
         return {"diagnostic_id": payload.diagnostic_id, "saved": result is not None}
 

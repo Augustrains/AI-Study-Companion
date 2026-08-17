@@ -16,7 +16,13 @@ class AppError(Exception):
     status_code = 500
     retryable = False
 
-    def __init__(self, message: str, *, details: dict[str, Any] | None = None, cause: Exception | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        details: dict[str, Any] | None = None,
+        cause: Exception | None = None,
+    ) -> None:
         """创建异常。
 
         Args:
@@ -99,6 +105,13 @@ class PermissionDeniedError(AppError):
 
     code = "PERMISSION_DENIED"
     status_code = 403
+
+
+class AuthenticationRequiredError(AppError):
+    """请求缺少可信的调用方身份。"""
+
+    code = "AUTHENTICATION_REQUIRED"
+    status_code = 401
 
 
 class ConfigurationError(AppError):

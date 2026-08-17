@@ -1,5 +1,14 @@
 import json
 
+from modules.context.models import (
+    ContextConstraints,
+    ContextEnvelope,
+    ContextIdentity,
+    ContextTrace,
+    ConversationContext,
+    LearnerContext,
+    WorkflowContext,
+)
 from modules.diagnosis.models import (
     AnswerRecord,
     AnswerResult,
@@ -8,10 +17,10 @@ from modules.diagnosis.models import (
     Question,
 )
 from modules.diagnosis.services import DiagnosisResultStore
+from modules.learner_profile.models import LearnerProfile, LearningPreferences
 from modules.learning_plan.agent import LearningPlanAgent, LearningPlanAgentInput
 from modules.learning_plan.module import LearningPlanModule
 from modules.learning_plan.schemas import GenerateLearningPlanResponse
-from modules.learner_profile.models import LearnerProfile, LearningPreferences
 from tests.test_support import test_directory
 
 
@@ -22,6 +31,16 @@ class RecordingLLMClient:
 
     def generate(self, prompt: str) -> str:
         self.prompt = prompt
+        return self.response
+
+
+class RecordingMessagesClient(RecordingLLMClient):
+    def __init__(self, response: str) -> None:
+        super().__init__(response)
+        self.messages: list[dict[str, str]] = []
+
+    def generate_messages(self, messages: list[dict[str, str]]) -> str:
+        self.messages = messages
         return self.response
 
 
@@ -115,7 +134,8 @@ def test_agent_uses_llm_task_wording_but_preserves_backend_owned_fields() -> Non
     assert plan["tasks"][0]["knowledge_point_ids"] == ["overfitting"]
     assert plan["tasks"][0]["status"] == "in_progress"
     assert plan["advice"] == ["先修复概念混淆，再进行复测。"]
-    assert "训练误差下降但验证误差上升" in client.prompt
+    assert "correctAnswerText" not in client.prompt
+    assert "训练误差下降但验证误差上升" not in client.prompt
 
 
 def test_agent_invalid_json_falls_back_to_deterministic_plan() -> None:
@@ -125,6 +145,53 @@ def test_agent_invalid_json_falls_back_to_deterministic_plan() -> None:
 
     assert plan["tasks"][0]["title"] == "提升概念理解能力"
     assert plan["advice"][0].startswith("诊断正确率为 0%")
+
+
+def test_agent_context_messages_omit_correct_answer_fields() -> None:
+    envelope = ContextEnvelope(
+        identity=ContextIdentity(
+            context_id="ctx-1",
+            request_id="req-1",
+            user_id="alice",
+            book_id="ml",
+            mode="planning",
+        ),
+        current_input="goal",
+        learner=LearnerContext(),
+        workflow=WorkflowContext(
+            workflow_state={
+                "questionEvidence": [
+                    {
+                        "submittedAnswerText": "wrong",
+                        "correctAnswerText": "secret answer",
+                    }
+                ]
+            }
+        ),
+        conversation=ConversationContext(),
+        constraints=ContextConstraints(
+            policy_version="test",
+            forbidden_fields=[],
+            max_context_tokens=20_000,
+            response_reserve_tokens=1_000,
+        ),
+        trace=ContextTrace(),
+    )
+    source = agent_input()
+    client = RecordingMessagesClient("not-json")
+    LearningPlanAgent(client).build(
+        LearningPlanAgentInput(
+            **{
+                **source.__dict__,
+                "context": envelope,
+            }
+        ),
+        fallback_tasks=[fallback_task()],
+    )
+
+    prompt = "\n".join(message["content"] for message in client.messages)
+    assert "correctAnswerText" not in prompt
+    assert "secret answer" not in prompt
 
 
 def test_learning_plan_module_sends_derived_diagnosis_context_to_agent() -> None:
@@ -200,6 +267,8 @@ def test_learning_plan_module_sends_derived_diagnosis_context_to_agent() -> None
     assert response.resources[0].location == "lessons/overfitting.md"
     assert '"userCalibratedLevel": "了解"' in client.prompt
     assert '"submittedAnswerText": "训练误差下降"' in client.prompt
-    assert '"correctAnswerText": "训练误差下降但验证误差上升"' in client.prompt
+    assert "correctAnswer" not in client.prompt
+    assert "correct_answer" not in client.prompt
+    assert "训练误差下降但验证误差上升" not in client.prompt
     assert '"sessionTimeBudgetMinutes": 12' in client.prompt
     assert "我在项目中使用过这个概念，但本轮题目理解有偏差。" in client.prompt

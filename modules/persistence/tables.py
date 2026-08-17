@@ -3,10 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 from sqlalchemy import (
+    JSON,
     ForeignKey,
     Index,
     Integer,
-    JSON,
     String,
     Text,
     UniqueConstraint,
@@ -37,7 +37,9 @@ class MemoryEventRow(Base):
     source_type: Mapped[str] = mapped_column(String(64), nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    algorithm_version: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    algorithm_version: Mapped[str] = mapped_column(
+        String(80), nullable=False, default=""
+    )
     occurred_at: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[str] = mapped_column(String(64), nullable=False)
 
@@ -67,6 +69,17 @@ class LearnerMemoryHistoryRow(Base):
     )
 
 
+class MigrationLedgerRow(Base):
+    """One row means that one versioned data migration completed successfully."""
+
+    __tablename__ = "migration_ledger"
+
+    migration_name: Mapped[str] = mapped_column(String(128), primary_key=True)
+    version: Mapped[str] = mapped_column(String(32), primary_key=True)
+    details: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    completed_at: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
 class ConversationRow(Base):
     __tablename__ = "conversations"
 
@@ -81,6 +94,45 @@ class ConversationRow(Base):
 
     __table_args__ = (
         Index("ix_conversations_owner", "user_id", "book_id", "updated_at"),
+    )
+
+
+class ConversationTurnRow(Base):
+    __tablename__ = "conversation_turns"
+
+    conversation_id: Mapped[str] = mapped_column(
+        String(128),
+        ForeignKey("conversations.conversation_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    request_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    book_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    response: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    execution_token: Mapped[str] = mapped_column(
+        String(128), nullable=False, default=""
+    )
+    lease_expires_at: Mapped[str] = mapped_column(
+        String(64), nullable=False, default=""
+    )
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[str] = mapped_column(String(64), nullable=False)
+    updated_at: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "conversation_id",
+            "request_id",
+            name="uq_conversation_turn_request",
+        ),
+        Index(
+            "ix_conversation_turn_owner",
+            "user_id",
+            "book_id",
+            "updated_at",
+        ),
     )
 
 
@@ -155,3 +207,18 @@ class ContextTraceRow(Base):
     selected_message_range: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     estimated_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class DiagnosisResultRow(Base):
+    __tablename__ = "diagnosis_results"
+
+    diagnosis_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    book_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[str] = mapped_column(String(64), nullable=False)
+    updated_at: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    __table_args__ = (
+        Index("ix_diagnosis_results_owner", "user_id", "book_id", "updated_at"),
+    )

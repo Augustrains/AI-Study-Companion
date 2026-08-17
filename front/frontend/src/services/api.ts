@@ -4,6 +4,44 @@ export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "/api";
 // Use the backend by default. Set VITE_USE_REAL_API=false only for an explicit
 // standalone Mock demonstration.
 export const USE_REAL_API = import.meta.env.VITE_USE_REAL_API !== "false";
+const USER_STORAGE_KEY = "study-companion-user-id";
+const TOKEN_STORAGE_KEY = "study-companion-access-token";
+
+export function currentAccessToken(): string {
+  const configured = String(import.meta.env.VITE_AUTH_TOKEN ?? "").trim();
+  if (configured) return configured;
+  if (typeof window !== "undefined") {
+    return window.localStorage.getItem(TOKEN_STORAGE_KEY)?.trim() ?? "";
+  }
+  return "";
+}
+
+function tokenSubject(token: string): string {
+  try {
+    const encoded = token.split(".")[1] ?? "";
+    const normalized = encoded.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+    const payload = JSON.parse(window.atob(padded)) as { sub?: unknown };
+    return typeof payload.sub === "string" ? payload.sub.trim() : "";
+  } catch {
+    return "";
+  }
+}
+
+export function currentUserId(): string {
+  const accessToken = currentAccessToken();
+  if (accessToken && typeof window !== "undefined") {
+    const verifiedByBackend = tokenSubject(accessToken);
+    if (verifiedByBackend) return verifiedByBackend;
+  }
+  const configured = String(import.meta.env.VITE_USER_ID ?? "").trim();
+  if (configured) return configured;
+  if (typeof window !== "undefined") {
+    const stored = window.localStorage.getItem(USER_STORAGE_KEY)?.trim();
+    if (stored) return stored;
+  }
+  return "user_001";
+}
 
 export type ApiState = "initial" | "loading" | "ready" | "empty" | "submitting" | "success" | "error" | "offline" | "stale";
 export type ApiError = { code: string; message: string; requestId?: string; retryable?: boolean; details?: unknown };
@@ -33,7 +71,7 @@ export type TodayLearningResponse = {
   continueLearning: { taskId: string; title: string; type: string; minutes: number; status: string; expectedCompletionDate: string; description: string; reason: string } | null;
 };
 export type QaConversation = { conversationId: string; bookId: BookId; userId: string; createdAt: string; status: string };
-export type QaQuestionPayload = { bookId: BookId; question: string; conversationId?: string; sources?: Source[] };
+export type QaQuestionPayload = { bookId: BookId; question: string; conversationId?: string; requestId?: string; sources?: Source[] };
 export type QaResult = { answer: string; refused: boolean; citations: Source[]; relatedKnowledgePoints?: string[]; recommendedAction?: string; conversationId?: string; requestId?: string };
 export type MaterialLearningPlanPayload = { bookId: BookId; title: string; goal: string; description: string; minutes: number; expectedCompletionDate: string; resources: Source[] };
 export type LearningActivity = {
@@ -82,9 +120,14 @@ export type LearnerProfileWorkflowStart = { workflowId: string; status: "pending
 
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   try {
+    const headers = new Headers(init?.headers);
+    headers.set("Content-Type", "application/json");
+    const accessToken = currentAccessToken();
+    if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
+    else headers.set("X-User-Id", currentUserId());
     const response = await fetch(`${API_BASE_URL}${path}`, {
-      headers: { "Content-Type": "application/json", ...init?.headers },
       ...init,
+      headers,
     });
     if (!response.ok) {
       const error = (await response.json().catch(() => null)) as ApiError | null;
@@ -98,6 +141,7 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 const wait = (duration = 420) => new Promise((resolve) => window.setTimeout(resolve, duration));
+const newRequestId = () => typeof crypto !== "undefined" && "randomUUID" in crypto ? `qa-${crypto.randomUUID()}` : `qa-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
 /**
  * 页面演示使用的模拟服务。它与真实接口保持同一组动作名称，后端接入时只替换服务实现。
@@ -105,7 +149,7 @@ const wait = (duration = 420) => new Promise((resolve) => window.setTimeout(reso
 export const mockApi = {
   async createConversation(bookId: BookId): Promise<QaConversation> {
     await wait(260);
-    return { conversationId: `mock-qa-${Date.now()}`, bookId, userId: "user_001", createdAt: new Date().toISOString(), status: "active" };
+    return { conversationId: `mock-qa-${Date.now()}`, bookId, userId: currentUserId(), createdAt: new Date().toISOString(), status: "active" };
   },
   async startDiagnostic(bookId: BookId): Promise<DiagnosticStartResult> {
     await wait();
@@ -207,7 +251,7 @@ export const mockApi = {
  * 真实服务的接口映射。启用 VITE_USE_REAL_API=true 后，页面可以切换到后端。
  */
 export const realApi = {
-  createConversation: (bookId: BookId) => request<QaConversation>("/rag/conversations", { method: "POST", body: JSON.stringify({ bookId, userId: "user_001" }) }),
+  createConversation: (bookId: BookId) => request<QaConversation>("/rag/conversations", { method: "POST", body: JSON.stringify({ bookId, userId: currentUserId() }) }),
   startDiagnostic: (bookId: BookId, learningGoal?: string) => request<DiagnosticStartResult>("/diagnostics/start", { method: "POST", body: JSON.stringify({ bookId, learningGoal }) }),
   submitDiagnosticAnswer: (diagnosticId: string, payload: { questionId: string; answer: string; skipped?: boolean }) => request(`/diagnostics/${diagnosticId}/answers`, { method: "POST", body: JSON.stringify(payload) }),
   finishDiagnostic: (diagnosticId: string) => request<DiagnosticResult>(`/diagnostics/${diagnosticId}/finish`, { method: "POST" }),
@@ -219,14 +263,14 @@ export const realApi = {
     if (diagnosticId) query.set("diagnosticId", diagnosticId);
     return request<LearningPlanLookup>(`/learning-plans?${query.toString()}`);
   },
-  getTodayLearning: (bookId: BookId) => request<TodayLearningResponse>(`/today-learning?userId=user_001&bookId=${encodeURIComponent(bookId)}`),
-  writeLearningEvent: (payload: { taskId: string; taskTitle: string; eventType: string; status: string }) => request("/learning-events", { method: "POST", body: JSON.stringify({ ...payload, userId: "user_001" }) }),
+  getTodayLearning: (bookId: BookId) => request<TodayLearningResponse>(`/today-learning?userId=${encodeURIComponent(currentUserId())}&bookId=${encodeURIComponent(bookId)}`),
+  writeLearningEvent: (payload: { taskId: string; taskTitle: string; eventType: string; status: string }) => request("/learning-events", { method: "POST", body: JSON.stringify({ ...payload, userId: currentUserId() }) }),
   getLearningRecords: (params?: { category?: string; page?: number; pageSize?: number }) => {
-    const query = new URLSearchParams({ userId: "user_001", page: String(params?.page ?? 1), pageSize: String(params?.pageSize ?? 50) });
+    const query = new URLSearchParams({ userId: currentUserId(), page: String(params?.page ?? 1), pageSize: String(params?.pageSize ?? 50) });
     if (params?.category && params.category !== "all") query.set("category", params.category);
     return request<LearningActivityList>(`/learning-records?${query.toString()}`);
   },
-  askQuestion: (payload: QaQuestionPayload) => request<QaResult>(`/rag/conversations/${encodeURIComponent(payload.conversationId ?? "")}/messages`, { method: "POST", body: JSON.stringify({ bookId: payload.bookId, question: payload.question, userId: "user_001" }) }),
+  askQuestion: (payload: QaQuestionPayload) => request<QaResult>(`/rag/conversations/${encodeURIComponent(payload.conversationId ?? "")}/messages`, { method: "POST", body: JSON.stringify({ bookId: payload.bookId, question: payload.question, userId: currentUserId(), requestId: payload.requestId ?? newRequestId() }) }),
   getLearnerProfile: (userId: string, learningDomain: string) => request<LearnerProfileResult>(`/learner-profile?user_id=${encodeURIComponent(userId)}&learning_domain=${encodeURIComponent(learningDomain)}`),
   getKnowledgePoints: (learningDomain: string) => request<KnowledgePointResult>(`/learner-profile/knowledge-points?learning_domain=${encodeURIComponent(learningDomain)}`),
   saveLearnerProfile: async (payload: LearnerProfilePayload) => {

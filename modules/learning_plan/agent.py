@@ -4,13 +4,65 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import date
 from typing import Any
 
 from modules.common.errors import ConfigurationError, ExternalServiceError
-from sdk.llm_client import LLMClient, NullLLMClient
+from modules.common.time import business_today
+from modules.context.renderer import ContextRenderer
+from sdk.llm_client import LLMClient, NullLLMClient, generate_messages_compat
 
 from .models import LEARNING_TASK_TYPES_BY_SOURCE
+
+
+def _without_answer_secrets(value: Any) -> Any:
+    """Remove answer keys before any planning data reaches an LLM prompt."""
+
+    if isinstance(value, dict):
+        result = {}
+        for key, item in value.items():
+            normalized = "".join(char for char in str(key).lower() if char.isalnum())
+            if (
+                normalized.startswith("correctanswer")
+                or normalized in {"answerkey", "solution", "referenceanswer"}
+            ):
+                continue
+            result[str(key)] = _without_answer_secrets(item)
+        return result
+    if isinstance(value, list):
+        return [_without_answer_secrets(item) for item in value]
+    if isinstance(value, tuple):
+        return [_without_answer_secrets(item) for item in value]
+    return value
+
+
+def _sanitize_context_messages(
+    messages: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    """Strip answer-bearing JSON fields from role-aware context messages."""
+
+    prefix = "<context_data>\n"
+    suffix = "\n</context_data>"
+    sanitized: list[dict[str, str]] = []
+    for message in messages:
+        safe_message = dict(message)
+        content = str(safe_message.get("content", ""))
+        if (
+            safe_message.get("role") == "user"
+            and content.startswith(prefix)
+            and content.endswith(suffix)
+        ):
+            payload = json.loads(content[len(prefix) : -len(suffix)])
+            safe_message["content"] = (
+                prefix
+                + json.dumps(
+                    _without_answer_secrets(payload),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+                + suffix
+            )
+        sanitized.append(safe_message)
+    return sanitized
 
 
 @dataclass(frozen=True)
@@ -28,6 +80,7 @@ class LearningPlanAgentInput:
     calibration: dict[str, Any] = field(default_factory=dict)
     learner_preferences: dict[str, Any] = field(default_factory=dict)
     constraints: dict[str, Any] = field(default_factory=dict)
+    context: Any | None = None
 
 
 class LearningPlanAgent:
@@ -39,8 +92,8 @@ class LearningPlanAgent:
 
     def __init__(self, llm_client: LLMClient | None = None) -> None:
         self.llm_client = llm_client or NullLLMClient()
-    
-    #整个类的主入口
+
+    # 整个类的主入口
     def build(
         self,
         agent_input: LearningPlanAgentInput,
@@ -48,11 +101,19 @@ class LearningPlanAgent:
         fallback_tasks: list[dict[str, Any]],
     ) -> dict[str, Any]:
         """Generate and validate an LLM plan, falling back on local templates."""
-        
-        #生成本地兜底计划
+
+        # 生成本地兜底计划
         fallback = self._fallback_plan(agent_input, fallback_tasks)
         try:
-            raw_response = self.llm_client.generate(self._build_prompt(agent_input))
+            if agent_input.context is None:
+                raw_response = self.llm_client.generate(self._build_prompt(agent_input))
+            else:
+                messages = ContextRenderer().render(
+                    agent_input.context,
+                    agent_instructions=self._agent_instructions(),
+                )
+                messages = _sanitize_context_messages(messages)
+                raw_response = generate_messages_compat(self.llm_client, messages)
         except (ConfigurationError, ExternalServiceError):
             return fallback
         if not raw_response.strip():
@@ -127,10 +188,14 @@ class LearningPlanAgent:
             generated = dict(template)
             generated.update(
                 {
-                    "title": self._bounded_text(raw_task.get("title"), template["title"], 100),
+                    "title": self._bounded_text(
+                        raw_task.get("title"), template["title"], 100
+                    ),
                     "type": task_type,
                     "minutes": max(minimum_minutes, min(minutes, maximum_minutes)),
-                    "reason": self._bounded_text(raw_task.get("reason"), template["reason"], 300),
+                    "reason": self._bounded_text(
+                        raw_task.get("reason"), template["reason"], 300
+                    ),
                     "description": self._bounded_text(
                         raw_task.get("description"), template["description"], 500
                     ),
@@ -143,7 +208,9 @@ class LearningPlanAgent:
         # diagnosed ability from the plan. Missing units retain local defaults.
         for ability_id, template in fallback_by_ability.items():
             if ability_id not in generated_by_ability:
-                generated_by_ability[ability_id] = self._constrained_fallback_task(template, agent_input)
+                generated_by_ability[ability_id] = self._constrained_fallback_task(
+                    template, agent_input
+                )
                 generated_order.append(ability_id)
 
         if not generated_order and fallback_tasks:
@@ -165,7 +232,10 @@ class LearningPlanAgent:
     @staticmethod
     def _add_schedule(task: dict[str, Any]) -> dict[str, Any]:
         scheduled = dict(task)
-        scheduled.setdefault("expected_completion_date", date.today().isoformat())
+        scheduled.setdefault(
+            "expected_completion_date",
+            business_today().isoformat(),
+        )
         return scheduled
 
     def _constrained_fallback_task(
@@ -176,7 +246,9 @@ class LearningPlanAgent:
         constrained = dict(task)
         minimum = int(agent_input.constraints.get("minTaskMinutes", 5))
         maximum = int(agent_input.constraints.get("maxTaskMinutes", 60))
-        constrained["minutes"] = max(minimum, min(int(constrained.get("minutes", minimum)), maximum))
+        constrained["minutes"] = max(
+            minimum, min(int(constrained.get("minutes", minimum)), maximum)
+        )
         return self._add_schedule(constrained)
 
     def _fallback_plan(
@@ -187,12 +259,15 @@ class LearningPlanAgent:
         results = list(agent_input.knowledge_point_results)
         records = list(agent_input.question_evidence)
         weak_results = sorted(results, key=self._result_score)
-        accuracy = int(round(float(agent_input.diagnostic_summary.get("accuracy", 0))))
+        accuracy = round(float(agent_input.diagnostic_summary.get("accuracy", 0)))
         return {
             "book": agent_input.book,
             "goal": agent_input.goal,
             "goalLevel": agent_input.goal_level,
-            "tasks": [self._constrained_fallback_task(task, agent_input) for task in fallback_tasks],
+            "tasks": [
+                self._constrained_fallback_task(task, agent_input)
+                for task in fallback_tasks
+            ],
             "advice": self._build_advice(weak_results, records, accuracy),
             "resources": agent_input.candidate_resources,
         }
@@ -202,7 +277,10 @@ class LearningPlanAgent:
         status = result.get("effectiveMasteryLevel") or result.get("masteryLevel") or ""
         correct = int(result.get("roundCorrect", 0))
         total = int(result.get("roundTotal", 0))
-        return (0 if status in {"未测评", "不会", "了解"} else 1, correct / total if total else 0)
+        return (
+            0 if status in {"未测评", "不会", "了解"} else 1,
+            correct / total if total else 0,
+        )
 
     @staticmethod
     def _build_advice(
@@ -213,30 +291,40 @@ class LearningPlanAgent:
         advice: list[str] = []
         if weak_results:
             weakest = weak_results[0]
-            name = str(weakest.get("knowledgePointName") or weakest.get("knowledgePointId") or "当前薄弱知识点")
-            advice.append(f"诊断正确率为 {accuracy}%；优先学习“{name}”，再进行针对性复测。")
+            name = str(
+                weakest.get("knowledgePointName")
+                or weakest.get("knowledgePointId")
+                or "当前薄弱知识点"
+            )
+            advice.append(
+                f"诊断正确率为 {accuracy}%；优先学习“{name}”，再进行针对性复测。"
+            )
         skipped = sum(1 for item in records if item.get("outcome") == "skipped")
         if skipped:
             advice.append(f"本次诊断有 {skipped} 道题未完成，相关结论的证据仍需补充。")
         if records and not advice:
-            advice.append(f"本次诊断正确率为 {accuracy}%，建议继续完成计划中的下一项任务。")
+            advice.append(
+                f"本次诊断正确率为 {accuracy}%，建议继续完成计划中的下一项任务。"
+            )
         return advice
 
     @staticmethod
     def _build_prompt(agent_input: LearningPlanAgentInput) -> str:
-        context = {
-            "book": agent_input.book,
-            "learningGoal": agent_input.goal,
-            "goalLevel": agent_input.goal_level,
-            "diagnosticSummary": agent_input.diagnostic_summary,
-            "knowledgePointResults": agent_input.knowledge_point_results,
-            "abilityUnits": agent_input.ability_units,
-            "questionEvidence": agent_input.question_evidence,
-            "candidateResources": agent_input.candidate_resources,
-            "calibration": agent_input.calibration,
-            "learnerPreferences": agent_input.learner_preferences,
-            "constraints": agent_input.constraints,
-        }
+        context = _without_answer_secrets(
+            {
+                "book": agent_input.book,
+                "learningGoal": agent_input.goal,
+                "goalLevel": agent_input.goal_level,
+                "diagnosticSummary": agent_input.diagnostic_summary,
+                "knowledgePointResults": agent_input.knowledge_point_results,
+                "abilityUnits": agent_input.ability_units,
+                "questionEvidence": agent_input.question_evidence,
+                "candidateResources": agent_input.candidate_resources,
+                "calibration": agent_input.calibration,
+                "learnerPreferences": agent_input.learner_preferences,
+                "constraints": agent_input.constraints,
+            }
+        )
         return f"""你是 Study Companion 的学习计划 Agent。请根据后端已经验证的诊断事实生成学习任务排序和学习建议。
 
 规则：
@@ -268,3 +356,11 @@ class LearningPlanAgent:
 输入：
 {json.dumps(context, ensure_ascii=False)}
 """
+
+    @staticmethod
+    def _agent_instructions() -> str:
+        return """你是 Study Companion 的学习计划 Agent。只能根据后端验证事实生成任务排序和建议。
+不得修改或重新计算掌握等级、分数、正确率和置信度。
+任务 abilityId 只能来自 abilityUnits，每个最多一个且必须全覆盖。
+type 和 minutes 必须满足 constraints；不得创造能力、知识点、题目或资料 ID。
+只输出合法 JSON：{"tasks":[{"abilityId":"ID","title":"标题","type":"practice","minutes":20,"reason":"原因","description":"说明"}],"advice":["建议"]}"""

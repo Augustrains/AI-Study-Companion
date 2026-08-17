@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import type { BookId } from "../data/mockData";
-import { api, type KnowledgePoint, type LearnerProfile, type LearnerProfilePayload } from "../services/api";
+import { api, currentUserId, type KnowledgePoint, type LearnerProfile, type LearnerProfilePayload } from "../services/api";
 
 const domains: Record<BookId, { value: string; label: string }> = { ml: { value: "machine_learning", label: "机器学习" }, dl: { value: "deep_learning", label: "深度学习" } };
 const defaultForm = (userId: string, domain: string): LearnerProfilePayload => ({ user_id: userId, learning_domain: domain, background: "", self_assessed_level: "unknown", known_knowledge_point_ids: [], known_knowledge_point_note: "", unknown_knowledge_point_ids: [], current_confusions: "", additional_requirements: "", preferences: { activity_types: ["reading", "quiz"], content_style: "balanced", difficulty: "adaptive", session_duration_minutes: 30, learning_frequency: "flexible" } });
@@ -10,7 +10,7 @@ function Choice({ point, selected, onClick }: { point: KnowledgePoint; selected:
 }
 
 export function LearnerProfileView({ bookId }: { bookId: BookId }) {
-  const userId = useMemo(() => new URLSearchParams(window.location.search).get("user_id")?.trim() || "user_001", []);
+  const userId = useMemo(() => currentUserId(), []);
   const domain = domains[bookId];
   const [form, setForm] = useState<LearnerProfilePayload>(() => defaultForm(userId, domain.value));
   const [existing, setExisting] = useState<LearnerProfile | null>(null);

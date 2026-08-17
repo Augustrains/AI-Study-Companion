@@ -11,9 +11,15 @@ from modules.persistence.tables import (
     ConversationMessageRow,
     ConversationRow,
     ConversationSummaryRow,
+    ConversationTurnRow,
 )
 
-from .models import Conversation, ConversationMessage, ConversationSummary
+from .models import (
+    Conversation,
+    ConversationMessage,
+    ConversationSummary,
+    ConversationTurn,
+)
 
 
 class SqlConversationRepository:
@@ -50,6 +56,84 @@ class SqlConversationRepository:
             created_at=row.created_at,
         )
 
+    @staticmethod
+    def _turn(row: ConversationTurnRow) -> ConversationTurn:
+        return ConversationTurn(
+            conversation_id=row.conversation_id,
+            request_id=row.request_id,
+            user_id=row.user_id,
+            book_id=row.book_id,
+            question=row.question,
+            status=row.status,
+            response=dict(row.response),
+            execution_token=row.execution_token,
+            lease_expires_at=row.lease_expires_at,
+            attempt_count=row.attempt_count,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+        )
+
+    def _begin_write(self, session) -> None:
+        if self.database.engine.dialect.name.startswith("sqlite"):
+            session.execute(text("BEGIN IMMEDIATE"))
+
+    def _owned_conversation_row(
+        self,
+        session,
+        *,
+        conversation_id: str,
+        actor_user_id: str,
+        book_id: str,
+    ) -> ConversationRow:
+        statement = select(ConversationRow).where(
+            ConversationRow.conversation_id == conversation_id
+        )
+        if not self.database.engine.dialect.name.startswith("sqlite"):
+            statement = statement.with_for_update()
+        row = session.execute(statement).scalar_one_or_none()
+        if (
+            row is None
+            or row.user_id != actor_user_id
+            or row.book_id != book_id
+        ):
+            raise ResourceNotFoundError(
+                "conversation not found",
+                details={"conversation_id": conversation_id},
+            )
+        return row
+
+    @staticmethod
+    def _owned_turn_row(
+        session,
+        *,
+        conversation_id: str,
+        request_id: str,
+        actor_user_id: str,
+        book_id: str,
+        lock: bool,
+        sqlite: bool,
+    ) -> ConversationTurnRow:
+        statement = select(ConversationTurnRow).where(
+            ConversationTurnRow.conversation_id == conversation_id,
+            ConversationTurnRow.request_id == request_id,
+        )
+        if lock and not sqlite:
+            statement = statement.with_for_update()
+        row = session.execute(statement).scalar_one_or_none()
+        if (
+            row is None
+            or row.user_id != actor_user_id
+            or row.book_id != book_id
+        ):
+            raise ResourceNotFoundError(
+                "conversation turn not found",
+                details={
+                    "conversation_id": conversation_id,
+                    "request_id": request_id,
+                },
+            )
+        return row
+
     def create(self, conversation: Conversation) -> Conversation:
         with self.database.session() as session:
             if session.get(ConversationRow, conversation.conversation_id) is not None:
@@ -75,6 +159,283 @@ class SqlConversationRepository:
         with self.database.session() as session:
             row = session.get(ConversationRow, conversation_id)
             return self._conversation(row) if row else None
+
+    def begin_turn(self, turn: ConversationTurn) -> ConversationTurn:
+        """Create a pending turn or return its same-question duplicate."""
+
+        try:
+            with self.database.session() as session:
+                self._begin_write(session)
+                self._owned_conversation_row(
+                    session,
+                    conversation_id=turn.conversation_id,
+                    actor_user_id=turn.user_id,
+                    book_id=turn.book_id,
+                )
+                existing = session.get(
+                    ConversationTurnRow,
+                    (turn.conversation_id, turn.request_id),
+                )
+                if existing is not None:
+                    if (
+                        existing.user_id != turn.user_id
+                        or existing.book_id != turn.book_id
+                    ):
+                        raise ResourceNotFoundError(
+                            "conversation turn not found",
+                            details={
+                                "conversation_id": turn.conversation_id,
+                                "request_id": turn.request_id,
+                            },
+                        )
+                    if existing.question != turn.question:
+                        raise ConflictError(
+                            "conversation turn request id has a different question",
+                            details={
+                                "conversation_id": turn.conversation_id,
+                                "request_id": turn.request_id,
+                            },
+                        )
+                    return self._turn(existing)
+                session.add(
+                    ConversationTurnRow(
+                        conversation_id=turn.conversation_id,
+                        request_id=turn.request_id,
+                        user_id=turn.user_id,
+                        book_id=turn.book_id,
+                        question=turn.question,
+                        status=turn.status,
+                        response=turn.response,
+                        execution_token=turn.execution_token,
+                        lease_expires_at=turn.lease_expires_at,
+                        attempt_count=turn.attempt_count,
+                        created_at=turn.created_at,
+                        updated_at=turn.updated_at,
+                    )
+                )
+            return turn
+        except IntegrityError as exc:
+            # Normalize a cross-process insert race into idempotent reuse or a
+            # domain conflict; callers must never receive SQLAlchemy details.
+            existing = self.get_turn(turn.conversation_id, turn.request_id)
+            if (
+                existing is not None
+                and existing.user_id == turn.user_id
+                and existing.book_id == turn.book_id
+            ):
+                if existing.question == turn.question:
+                    return existing
+                raise ConflictError(
+                    "conversation turn request id has a different question",
+                    details={
+                        "conversation_id": turn.conversation_id,
+                        "request_id": turn.request_id,
+                    },
+                    cause=exc,
+                ) from exc
+            raise ConflictError(
+                "conversation turn conflicted with a concurrent write",
+                details={
+                    "conversation_id": turn.conversation_id,
+                    "request_id": turn.request_id,
+                },
+                cause=exc,
+            ) from exc
+
+    def get_turn(
+        self,
+        conversation_id: str,
+        request_id: str,
+    ) -> ConversationTurn | None:
+        with self.database.session() as session:
+            row = session.get(
+                ConversationTurnRow,
+                (conversation_id, request_id),
+            )
+            return self._turn(row) if row is not None else None
+
+    def claim_turn(
+        self,
+        *,
+        conversation_id: str,
+        request_id: str,
+        actor_user_id: str,
+        book_id: str,
+        execution_token: str,
+        lease_expires_at: str,
+        updated_at: str,
+    ) -> ConversationTurn:
+        """Atomically claim a retryable turn for one execution lease."""
+
+        try:
+            with self.database.session() as session:
+                self._begin_write(session)
+                self._owned_conversation_row(
+                    session,
+                    conversation_id=conversation_id,
+                    actor_user_id=actor_user_id,
+                    book_id=book_id,
+                )
+                row = self._owned_turn_row(
+                    session,
+                    conversation_id=conversation_id,
+                    request_id=request_id,
+                    actor_user_id=actor_user_id,
+                    book_id=book_id,
+                    lock=True,
+                    sqlite=self.database.engine.dialect.name.startswith("sqlite"),
+                )
+                if row.status == "completed":
+                    return self._turn(row)
+                if (
+                    row.status == "pending"
+                    and row.execution_token
+                    and row.execution_token != execution_token
+                    and self._lease_is_active(row.lease_expires_at, updated_at)
+                ):
+                    raise ConflictError(
+                        "conversation turn is already in progress",
+                        details={
+                            "conversation_id": conversation_id,
+                            "request_id": request_id,
+                            "lease_expires_at": row.lease_expires_at,
+                        },
+                    )
+                row.status = "pending"
+                row.response = {}
+                row.execution_token = execution_token
+                row.lease_expires_at = lease_expires_at
+                row.attempt_count += 1
+                row.updated_at = updated_at
+                return self._turn(row)
+        except IntegrityError as exc:
+            raise ConflictError(
+                "conversation turn conflicted with a concurrent claim",
+                details={
+                    "conversation_id": conversation_id,
+                    "request_id": request_id,
+                },
+                cause=exc,
+            ) from exc
+
+    def complete_turn(
+        self,
+        *,
+        conversation_id: str,
+        request_id: str,
+        actor_user_id: str,
+        book_id: str,
+        response: dict[str, object],
+        updated_at: str,
+        execution_token: str = "",
+    ) -> ConversationTurn:
+        return self._transition_turn(
+            conversation_id=conversation_id,
+            request_id=request_id,
+            actor_user_id=actor_user_id,
+            book_id=book_id,
+            status="completed",
+            response=response,
+            updated_at=updated_at,
+            execution_token=execution_token,
+        )
+
+    def fail_turn(
+        self,
+        *,
+        conversation_id: str,
+        request_id: str,
+        actor_user_id: str,
+        book_id: str,
+        response: dict[str, object],
+        updated_at: str,
+        execution_token: str = "",
+    ) -> ConversationTurn:
+        return self._transition_turn(
+            conversation_id=conversation_id,
+            request_id=request_id,
+            actor_user_id=actor_user_id,
+            book_id=book_id,
+            status="failed",
+            response=response,
+            updated_at=updated_at,
+            execution_token=execution_token,
+        )
+
+    def _transition_turn(
+        self,
+        *,
+        conversation_id: str,
+        request_id: str,
+        actor_user_id: str,
+        book_id: str,
+        status: str,
+        response: dict[str, object],
+        updated_at: str,
+        execution_token: str,
+    ) -> ConversationTurn:
+        try:
+            with self.database.session() as session:
+                self._begin_write(session)
+                self._owned_conversation_row(
+                    session,
+                    conversation_id=conversation_id,
+                    actor_user_id=actor_user_id,
+                    book_id=book_id,
+                )
+                row = self._owned_turn_row(
+                    session,
+                    conversation_id=conversation_id,
+                    request_id=request_id,
+                    actor_user_id=actor_user_id,
+                    book_id=book_id,
+                    lock=True,
+                    sqlite=self.database.engine.dialect.name.startswith("sqlite"),
+                )
+                if row.status == "completed":
+                    if status == "failed" or row.response == response:
+                        return self._turn(row)
+                    raise ConflictError(
+                        "completed conversation turn has a different response",
+                        details={
+                            "conversation_id": conversation_id,
+                            "request_id": request_id,
+                        },
+                    )
+                if row.execution_token and row.execution_token != execution_token:
+                    raise ConflictError(
+                        "conversation turn execution lease is not owned",
+                        details={
+                            "conversation_id": conversation_id,
+                            "request_id": request_id,
+                        },
+                    )
+                row.status = status
+                row.response = response
+                row.execution_token = ""
+                row.lease_expires_at = ""
+                row.updated_at = updated_at
+                return self._turn(row)
+        except IntegrityError as exc:
+            raise ConflictError(
+                "conversation turn conflicted with a concurrent transition",
+                details={
+                    "conversation_id": conversation_id,
+                    "request_id": request_id,
+                },
+                cause=exc,
+            ) from exc
+
+    @staticmethod
+    def _lease_is_active(lease_expires_at: str, now: str) -> bool:
+        if not lease_expires_at:
+            return False
+        try:
+            return datetime.fromisoformat(lease_expires_at) > datetime.fromisoformat(now)
+        except ValueError:
+            # An unparseable non-empty lease is treated as active so a corrupt
+            # record cannot permit two executions.
+            return True
 
     def append_message(self, message: ConversationMessage) -> ConversationMessage:
         try:
@@ -140,6 +501,156 @@ class SqlConversationRepository:
                 cause=exc,
             ) from exc
         return message
+
+    def append_turn_messages(
+        self,
+        user_message: ConversationMessage,
+        assistant_message: ConversationMessage,
+        *,
+        actor_user_id: str,
+        book_id: str,
+    ) -> tuple[ConversationMessage, ConversationMessage]:
+        """Atomically append one contiguous user/assistant message pair."""
+
+        if (
+            user_message.conversation_id != assistant_message.conversation_id
+            or not user_message.request_id
+            or user_message.request_id != assistant_message.request_id
+            or user_message.role != "user"
+            or assistant_message.role != "assistant"
+        ):
+            raise ConflictError(
+                "conversation turn messages must share one request id and order",
+                details={
+                    "conversation_id": user_message.conversation_id,
+                    "request_id": user_message.request_id,
+                },
+            )
+        conversation_id = user_message.conversation_id
+        request_id = user_message.request_id
+        try:
+            with self.database.session() as session:
+                self._begin_write(session)
+                conversation = self._owned_conversation_row(
+                    session,
+                    conversation_id=conversation_id,
+                    actor_user_id=actor_user_id,
+                    book_id=book_id,
+                )
+                existing = list(
+                    session.execute(
+                        select(ConversationMessageRow).where(
+                            ConversationMessageRow.conversation_id
+                            == conversation_id,
+                            ConversationMessageRow.request_id == request_id,
+                        )
+                    ).scalars()
+                )
+                if existing:
+                    return self._match_turn_messages(
+                        existing,
+                        user_message=user_message,
+                        assistant_message=assistant_message,
+                    )
+
+                last_sequence = session.execute(
+                    select(ConversationMessageRow.sequence_no)
+                    .where(
+                        ConversationMessageRow.conversation_id == conversation_id
+                    )
+                    .order_by(ConversationMessageRow.sequence_no.desc())
+                    .limit(1)
+                ).scalar_one_or_none()
+                user_message.sequence_no = (last_sequence or 0) + 1
+                assistant_message.sequence_no = user_message.sequence_no + 1
+                session.add_all(
+                    [
+                        self._message_row(user_message),
+                        self._message_row(assistant_message),
+                    ]
+                )
+                conversation.updated_at = assistant_message.created_at
+                conversation.version += 2
+            return user_message, assistant_message
+        except IntegrityError as exc:
+            # A non-SQLite backend may race at commit after both readers saw
+            # no pair. Re-read and resolve a semantically identical winner.
+            conversation = self.get(conversation_id)
+            if (
+                conversation is None
+                or conversation.user_id != actor_user_id
+                or conversation.book_id != book_id
+            ):
+                raise ResourceNotFoundError(
+                    "conversation not found",
+                    details={"conversation_id": conversation_id},
+                ) from exc
+            with self.database.session() as session:
+                existing = list(
+                    session.execute(
+                        select(ConversationMessageRow).where(
+                            ConversationMessageRow.conversation_id
+                            == conversation_id,
+                            ConversationMessageRow.request_id == request_id,
+                        )
+                    ).scalars()
+                )
+            if existing:
+                return self._match_turn_messages(
+                    existing,
+                    user_message=user_message,
+                    assistant_message=assistant_message,
+                    cause=exc,
+                )
+            raise ConflictError(
+                "conversation turn messages conflicted with a concurrent write",
+                details={
+                    "conversation_id": conversation_id,
+                    "request_id": request_id,
+                },
+                cause=exc,
+            ) from exc
+
+    @staticmethod
+    def _message_row(message: ConversationMessage) -> ConversationMessageRow:
+        return ConversationMessageRow(
+            message_id=message.message_id,
+            conversation_id=message.conversation_id,
+            sequence_no=message.sequence_no,
+            role=message.role,
+            content=message.content,
+            request_id=message.request_id,
+            token_count=message.token_count,
+            created_at=message.created_at,
+        )
+
+    @classmethod
+    def _match_turn_messages(
+        cls,
+        rows: list[ConversationMessageRow],
+        *,
+        user_message: ConversationMessage,
+        assistant_message: ConversationMessage,
+        cause: Exception | None = None,
+    ) -> tuple[ConversationMessage, ConversationMessage]:
+        by_role = {row.role: row for row in rows}
+        if (
+            len(rows) == 2
+            and set(by_role) == {"user", "assistant"}
+            and by_role["user"].content == user_message.content
+            and by_role["assistant"].content == assistant_message.content
+        ):
+            return cls._message(by_role["user"]), cls._message(
+                by_role["assistant"]
+            )
+        raise ConflictError(
+            "conversation turn request id has different or incomplete messages",
+            details={
+                "conversation_id": user_message.conversation_id,
+                "request_id": user_message.request_id,
+            },
+            cause=cause,
+        )
 
     def list_messages(
         self,

@@ -10,6 +10,7 @@ from typing import Protocol
 from uuid import uuid4
 
 from modules.common.errors import ResourceNotFoundError, ValidationAppError
+from modules.conversation.service import ConversationService
 
 from .models import (
     MaterialQaAgentInput,
@@ -17,8 +18,8 @@ from .models import (
     MaterialQaAnswer,
     MaterialQaConversation,
     MaterialQaMessage,
-    MaterialQaRetrievedChunk,
     MaterialQaRetrievalResult,
+    MaterialQaRetrievedChunk,
 )
 from .schemas import MaterialQaSource
 
@@ -26,10 +27,12 @@ from .schemas import MaterialQaSource
 class MaterialQaActivityRecorder(Protocol):
     """Material QA 如果想记录“用户开始了一次资料问答”，外部记录器至少应该提供什么方法。"""
 
-    def record_qa_started(self, *, user_id: str, book_id: str, conversation_id: str) -> object:
-        ...
+    def record_qa_started(
+        self, *, user_id: str, book_id: str, conversation_id: str
+    ) -> object: ...
 
-#会话保存和读取
+
+# 会话保存和读取
 class MaterialQaConversationStore:
     """In-memory repository for concurrent material-QA conversations."""
 
@@ -49,7 +52,8 @@ class MaterialQaConversationStore:
                 details={"conversation_id": conversation_id},
             ) from exc
 
-#负责管理一次问答操作中的业务数据
+
+# 负责管理一次问答操作中的业务数据
 class MaterialQaService:
     """Own conversation operations and material-QA input/output construction."""
 
@@ -57,18 +61,37 @@ class MaterialQaService:
         self,
         store: MaterialQaConversationStore | None = None,
         activity_recorder: MaterialQaActivityRecorder | None = None,
+        conversations: ConversationService | None = None,
     ) -> None:
         self.store = store or MaterialQaConversationStore()
         self.activity_recorder = activity_recorder
+        self.conversations = conversations
 
-    def create_conversation(self, *, book_id: str, user_id: str) -> MaterialQaConversation:
-        conversation = MaterialQaConversation(
-            conversation_id=f"qa-{uuid4().hex[:12]}",
-            book_id=book_id,
-            user_id=user_id,
-            created_at=datetime.now(timezone.utc).isoformat(),
-        )
-        self.store.save(conversation)
+    def create_conversation(
+        self, *, book_id: str, user_id: str
+    ) -> MaterialQaConversation:
+        conversation_id = f"qa-{uuid4().hex[:12]}"
+        if self.conversations is not None:
+            stored = self.conversations.create(
+                user_id=user_id,
+                book_id=book_id,
+                mode="material_qa",
+                conversation_id=conversation_id,
+            )
+            conversation = MaterialQaConversation(
+                conversation_id=stored.conversation_id,
+                book_id=stored.book_id,
+                user_id=stored.user_id,
+                created_at=stored.created_at,
+            )
+        else:
+            conversation = MaterialQaConversation(
+                conversation_id=conversation_id,
+                book_id=book_id,
+                user_id=user_id,
+                created_at=datetime.now(timezone.utc).isoformat(),
+            )
+            self.store.save(conversation)
         if self.activity_recorder is not None:
             self.activity_recorder.record_qa_started(
                 user_id=user_id,
@@ -77,45 +100,222 @@ class MaterialQaService:
             )
         return conversation
 
-    #会话准备
+    # 会话准备
     def begin_question(
         self,
         *,
         conversation_id: str,
         book_id: str,
         question: str,
+        actor_user_id: str | None = None,
+        request_id: str | None = None,
     ) -> tuple[MaterialQaConversation, list[MaterialQaMessage]]:
-        conversation = self.require_conversation(conversation_id, book_id)
+        conversation = self.require_conversation(
+            conversation_id,
+            book_id,
+            actor_user_id=actor_user_id,
+        )
         history = list(conversation.messages)
-        conversation.messages.append(MaterialQaMessage(role="user", content=question))
-        self.store.save(conversation)
+        message = MaterialQaMessage(role="user", content=question)
+        conversation.messages.append(message)
+        if self.conversations is not None:
+            if not actor_user_id:
+                raise ValidationAppError("actor_user_id is required")
+            self.conversations.append(
+                conversation_id,
+                actor_user_id=actor_user_id,
+                role="user",
+                content=question,
+                request_id=request_id,
+                book_id=book_id,
+            )
+        else:
+            self.store.save(conversation)
         return conversation, history
 
-    #Agent生成结果后，更新会话
+    # Agent生成结果后，更新会话
     def complete_question(
         self,
         *,
         conversation: MaterialQaConversation,
         output: MaterialQaAgentOutput,
+        actor_user_id: str | None = None,
+        request_id: str | None = None,
     ) -> MaterialQaAnswer:
-        conversation.messages.append(MaterialQaMessage(role="assistant", content=output.answer))
-        self.store.save(conversation)
-        return MaterialQaAnswer(
+        conversation.messages.append(
+            MaterialQaMessage(role="assistant", content=output.answer)
+        )
+        if self.conversations is not None:
+            if not actor_user_id:
+                raise ValidationAppError("actor_user_id is required")
+            self.conversations.append(
+                conversation.conversation_id,
+                actor_user_id=actor_user_id,
+                role="assistant",
+                content=output.answer,
+                request_id=request_id,
+                book_id=conversation.book_id,
+            )
+        else:
+            self.store.save(conversation)
+        return self.answer_from_output(
             conversation_id=conversation.conversation_id,
+            output=output,
+            request_id=request_id or "",
+        )
+
+    @staticmethod
+    def answer_from_output(
+        *,
+        conversation_id: str,
+        output: MaterialQaAgentOutput,
+        request_id: str,
+    ) -> MaterialQaAnswer:
+        return MaterialQaAnswer(
+            conversation_id=conversation_id,
             answer=output.answer,
             refused=output.refused,
             citations=output.citations,
             related_knowledge_points=output.related_knowledge_points,
             recommended_action=output.recommended_action,
+            request_id=request_id,
         )
 
-    #业务校验
-    def require_conversation(self, conversation_id: str, book_id: str) -> MaterialQaConversation:
-        conversation = self.store.get(conversation_id)
-        if conversation.book_id != book_id:
+    @staticmethod
+    def answer_payload(answer: MaterialQaAnswer) -> dict[str, object]:
+        return {
+            "answer": answer.answer,
+            "refused": answer.refused,
+            "citations": [
+                citation.model_dump(by_alias=False) for citation in answer.citations
+            ],
+            "related_knowledge_points": list(answer.related_knowledge_points),
+            "recommended_action": answer.recommended_action,
+        }
+
+    @staticmethod
+    def answer_from_payload(
+        *,
+        conversation_id: str,
+        request_id: str,
+        payload: dict[str, object],
+    ) -> MaterialQaAnswer:
+        try:
+            raw_answer = payload["answer"]
+            raw_refused = payload["refused"]
+            raw_citations = payload.get("citations", [])
+            raw_related = payload.get("related_knowledge_points", [])
+            raw_action = payload.get("recommended_action", "")
+            if (
+                not isinstance(raw_answer, str)
+                or not raw_answer.strip()
+                or not isinstance(raw_refused, bool)
+                or not isinstance(raw_citations, list)
+                or not isinstance(raw_related, list)
+                or not isinstance(raw_action, str)
+            ):
+                raise TypeError("invalid material QA response fields")
+            citations = [
+                MaterialQaSource.model_validate(item)
+                for item in raw_citations
+            ]
+            if any(not isinstance(item, str) for item in raw_related):
+                raise TypeError("invalid related knowledge points")
+            return MaterialQaAnswer(
+                conversation_id=conversation_id,
+                answer=raw_answer,
+                refused=raw_refused,
+                citations=citations,
+                related_knowledge_points=list(raw_related),
+                recommended_action=raw_action,
+                request_id=request_id,
+            )
+        except (KeyError, TypeError, ValueError) as exc:
             raise ValidationAppError(
-                "conversation does not belong to the requested book",
-                details={"conversation_id": conversation_id, "book_id": book_id},
+                "stored material QA turn response is invalid",
+                details={
+                    "conversation_id": conversation_id,
+                    "request_id": request_id,
+                },
+                cause=exc,
+            ) from exc
+
+    def commit_turn_messages(
+        self,
+        *,
+        conversation_id: str,
+        book_id: str,
+        actor_user_id: str,
+        request_id: str,
+        question: str,
+        answer: str,
+    ) -> None:
+        if self.conversations is None:
+            conversation = self.require_conversation(
+                conversation_id,
+                book_id,
+                actor_user_id=actor_user_id,
+            )
+            conversation.messages.extend(
+                [
+                    MaterialQaMessage(role="user", content=question),
+                    MaterialQaMessage(role="assistant", content=answer),
+                ]
+            )
+            self.store.save(conversation)
+            return
+        self.conversations.append_turn_messages(
+            conversation_id,
+            actor_user_id=actor_user_id,
+            book_id=book_id,
+            request_id=request_id,
+            question=question,
+            answer=answer,
+        )
+
+    # 业务校验
+    def require_conversation(
+        self,
+        conversation_id: str,
+        book_id: str,
+        *,
+        actor_user_id: str | None = None,
+    ) -> MaterialQaConversation:
+        if self.conversations is not None:
+            if not actor_user_id:
+                raise ValidationAppError("actor_user_id is required")
+            stored = self.conversations.require_owned(
+                conversation_id,
+                actor_user_id=actor_user_id,
+                book_id=book_id,
+            )
+            messages = self.conversations.messages(
+                conversation_id,
+                actor_user_id=actor_user_id,
+                book_id=book_id,
+            )
+            return MaterialQaConversation(
+                conversation_id=stored.conversation_id,
+                book_id=stored.book_id,
+                user_id=stored.user_id,
+                created_at=stored.created_at,
+                messages=[
+                    MaterialQaMessage(
+                        role=item.role,
+                        content=item.content,
+                        created_at=item.created_at,
+                    )
+                    for item in messages
+                    if item.role in {"user", "assistant"}
+                ],
+            )
+        conversation = self.store.get(conversation_id)
+        if conversation.book_id != book_id or (
+            actor_user_id is not None and conversation.user_id != actor_user_id
+        ):
+            raise ResourceNotFoundError(
+                "material QA conversation not found",
+                details={"conversation_id": conversation_id},
             )
         return conversation
 
@@ -133,7 +333,7 @@ class MaterialQaService:
         )
 
 
-#负责把原始学习资料加工并写入 Qdrant
+# 负责把原始学习资料加工并写入 Qdrant
 class QdrantMaterialIndexer:
     """Parse formal Markdown material and build its Qdrant index."""
 
@@ -160,10 +360,14 @@ class QdrantMaterialIndexer:
             from langchain_text_splitters import RecursiveCharacterTextSplitter
             from qdrant_client.models import Distance, VectorParams
         except ImportError as exc:
-            raise RuntimeError("RAG dependencies are not installed; install requirements.txt first") from exc
+            raise RuntimeError(
+                "RAG dependencies are not installed; install requirements.txt first"
+            ) from exc
 
         if not document_path.exists():
-            raise ResourceNotFoundError("material document not found", details={"path": str(document_path)})
+            raise ResourceNotFoundError(
+                "material document not found", details={"path": str(document_path)}
+            )
 
         collection_name = self.collection_name(book_id)
         if client.collection_exists(collection_name):
@@ -183,7 +387,11 @@ class QdrantMaterialIndexer:
 
         documents: list[Document] = []
         ids: list[str] = []
-        paths = [document_path] if document_path.is_file() else sorted(document_path.rglob("*.md"))
+        paths = (
+            [document_path]
+            if document_path.is_file()
+            else sorted(document_path.rglob("*.md"))
+        )
         for source_path in paths:
             text = source_path.read_text(encoding="utf-8").strip()
             metadata = self._markdown_metadata(text)
@@ -208,15 +416,24 @@ class QdrantMaterialIndexer:
                             "source_document_id": str(metadata.get("source_id", "")),
                             "book_id": book_id,
                             "source_book_id": str(metadata.get("book_id", "")),
-                            "book_title": {"ml": "《机器学习》", "dl": "《深度学习》"}.get(book_id, book_id),
+                            "book_title": {
+                                "ml": "《机器学习》",
+                                "dl": "《深度学习》",
+                            }.get(book_id, book_id),
                             "title": source_path.stem,
-                            "location": str(source_path.relative_to(document_path.parent)),
+                            "location": str(
+                                source_path.relative_to(document_path.parent)
+                            ),
                             "chunk_index": chunk_index,
                             "content_unit_id": content_unit_id,
                             "topic_id": str(metadata.get("topic_id", "")),
                             "chapter": str(metadata.get("chapter", "")),
-                            "knowledge_points": list(metadata.get("knowledge_points", [])),
-                            "source_relative_path": str(metadata.get("source_relative_path", "")),
+                            "knowledge_points": list(
+                                metadata.get("knowledge_points", [])
+                            ),
+                            "source_relative_path": str(
+                                metadata.get("source_relative_path", "")
+                            ),
                             "source_commit": str(metadata.get("source_commit", "")),
                             "license": str(metadata.get("license", "")),
                             "source_url": str(metadata.get("source_url", "")),
@@ -243,9 +460,22 @@ class QdrantMaterialIndexer:
             ).add_documents(documents=documents, ids=ids)
 
     @staticmethod
-    def _content_relation(document_path: Path, content_unit_id: str) -> dict[str, object]:
-        data_dir = next((parent / "data" for parent in document_path.parents if (parent / "data").is_dir()), None)
-        result: dict[str, object] = {"chapter_id": "", "section_id": "", "knowledge_point_ids": []}
+    def _content_relation(
+        document_path: Path, content_unit_id: str
+    ) -> dict[str, object]:
+        data_dir = next(
+            (
+                parent / "data"
+                for parent in document_path.parents
+                if (parent / "data").is_dir()
+            ),
+            None,
+        )
+        result: dict[str, object] = {
+            "chapter_id": "",
+            "section_id": "",
+            "knowledge_point_ids": [],
+        }
         if data_dir is None:
             return result
 
@@ -256,17 +486,32 @@ class QdrantMaterialIndexer:
             with path.open(encoding="utf-8-sig", newline="") as handle:
                 return list(csv.DictReader(handle))
 
-        unit = next((row for row in rows("content_unit_catalog.csv") if row.get("content_unit_id") == content_unit_id), None)
+        unit = next(
+            (
+                row
+                for row in rows("content_unit_catalog.csv")
+                if row.get("content_unit_id") == content_unit_id
+            ),
+            None,
+        )
         if unit:
             result["chapter_id"] = unit.get("chapter_id", "")
-        section = next((row for row in rows("section_catalog.csv") if row.get("content_unit_id") == content_unit_id), None)
+        section = next(
+            (
+                row
+                for row in rows("section_catalog.csv")
+                if row.get("content_unit_id") == content_unit_id
+            ),
+            None,
+        )
         if section:
             result["section_id"] = section.get("section_id", "")
             result["chapter_id"] = section.get("chapter_id", result["chapter_id"])
         result["knowledge_point_ids"] = [
             row.get("knowledge_point_id", "")
             for row in rows("content_unit_knowledge_edges.csv")
-            if row.get("content_unit_id") == content_unit_id and row.get("knowledge_point_id")
+            if row.get("content_unit_id") == content_unit_id
+            and row.get("knowledge_point_id")
         ]
         return result
 
@@ -304,11 +549,16 @@ class QdrantMaterialIndexer:
         if match is None and not allow_plain_markdown:
             raise ValidationAppError(
                 "material document is missing the original material section",
-                details={"path": str(source_path), "heading": f"## {cls.ORIGINAL_MATERIAL_HEADING}"},
+                details={
+                    "path": str(source_path),
+                    "heading": f"## {cls.ORIGINAL_MATERIAL_HEADING}",
+                },
             )
-        original_material = text[match.end():].strip() if match else text.strip()
+        original_material = text[match.end() :].strip() if match else text.strip()
         if not original_material:
-            raise ValidationAppError("original material section is empty", details={"path": str(source_path)})
+            raise ValidationAppError(
+                "original material section is empty", details={"path": str(source_path)}
+            )
         return original_material
 
     def collection_needs_rebuild(self, *, client, collection_name: str) -> bool:
@@ -330,7 +580,7 @@ class QdrantMaterialIndexer:
         return f"study_companion_{book_id}"
 
 
-#定义检索能力
+# 定义检索能力
 class MaterialQaRetriever(Protocol):
     def retrieve(
         self,
@@ -339,10 +589,10 @@ class MaterialQaRetriever(Protocol):
         question: str,
         history: list[MaterialQaMessage],
         source_ids: list[str] | None = None,
-    ) -> MaterialQaRetrievalResult:
-        ...
+    ) -> MaterialQaRetrievalResult: ...
 
-#实际检索模块
+
+# 实际检索模块
 class QdrantMaterialRetriever:
     """Ensure the material index is ready, then retrieve matching chunks."""
 
@@ -391,10 +641,14 @@ class QdrantMaterialRetriever:
         client, embeddings = self._resources()
         document_path = self.documents.get(book_id)
         if document_path is None:
-            raise ResourceNotFoundError("material document not found", details={"book_id": book_id})
+            raise ResourceNotFoundError(
+                "material document not found", details={"book_id": book_id}
+            )
 
         collection_name = self.indexer.collection_name(book_id)
-        if self.indexer.collection_needs_rebuild(client=client, collection_name=collection_name):
+        if self.indexer.collection_needs_rebuild(
+            client=client, collection_name=collection_name
+        ):
             self.indexer.build(
                 book_id=book_id,
                 document_path=document_path,
@@ -425,7 +679,11 @@ class QdrantMaterialRetriever:
                 contentUnitId=str(metadata.get("content_unit_id", "")),
                 bookId=str(metadata.get("book_id", book_id)),
             )
-            chunks.append(MaterialQaRetrievedChunk(text=document.page_content, source=source, score=float(score)))
+            chunks.append(
+                MaterialQaRetrievedChunk(
+                    text=document.page_content, source=source, score=float(score)
+                )
+            )
         return MaterialQaRetrievalResult(chunks=chunks)
 
     def _resources(self):
@@ -434,11 +692,15 @@ class QdrantMaterialRetriever:
                 from langchain_huggingface import HuggingFaceEmbeddings
                 from qdrant_client import QdrantClient
             except ImportError as exc:
-                raise RuntimeError("RAG dependencies are not installed; install requirements.txt first") from exc
+                raise RuntimeError(
+                    "RAG dependencies are not installed; install requirements.txt first"
+                ) from exc
             try:
                 self.qdrant_path.mkdir(parents=True, exist_ok=True)
             except OSError as exc:
-                raise RuntimeError(f"cannot create Qdrant directory: {self.qdrant_path}") from exc
+                raise RuntimeError(
+                    f"cannot create Qdrant directory: {self.qdrant_path}"
+                ) from exc
             self._client = QdrantClient(path=str(self.qdrant_path))
             self._embeddings = HuggingFaceEmbeddings(
                 model_name=self.embedding_model_name,

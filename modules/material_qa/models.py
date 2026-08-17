@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Literal
 
+from modules.context.models import ContextEnvelope
+
 from .schemas import MaterialQaSource
 
 MessageRole = Literal["user", "assistant"]
@@ -62,6 +64,7 @@ class MaterialQaAgentInput:
     history: list[MaterialQaMessage]
     current_question: str
     retrieval: MaterialQaRetrievalResult
+    context: ContextEnvelope | None = None
 
 
 @dataclass(frozen=True)
@@ -85,3 +88,4 @@ class MaterialQaAnswer:
     citations: list[MaterialQaSource]
     related_knowledge_points: list[str]
     recommended_action: str
+    request_id: str = ""

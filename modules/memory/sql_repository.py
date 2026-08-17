@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 from modules.common import api as common_api
 from modules.common.errors import ConflictError
@@ -46,6 +50,28 @@ class SqlMemoryRepository:
             row = session.get(LearnerMemoryStateRow, (user_id, learning_domain))
             return row.state_version if row else 0
 
+    @contextmanager
+    def _event_session(self, event: MemoryEvent) -> Iterator[Session]:
+        """Serialize SQLite aggregate writes and normalize uniqueness races."""
+
+        try:
+            with self.database.session() as session:
+                if self.database.engine.dialect.name.startswith("sqlite"):
+                    # SQLite 没有 SELECT FOR UPDATE；在读取版本前取写锁，
+                    # 防止两个请求同时基于旧快照生成下一版。
+                    session.execute(text("BEGIN IMMEDIATE"))
+                yield session
+        except IntegrityError as exc:
+            raise ConflictError(
+                "learner memory was updated concurrently",
+                details={
+                    "event_id": event.event_id,
+                    "user_id": event.user_id,
+                    "learning_domain": event.learning_domain,
+                },
+                cause=exc,
+            ) from exc
+
     def upsert(self, memory: LearnerMemory) -> LearnerMemory:
         with self.database.session() as session:
             row = session.get(
@@ -88,7 +114,7 @@ class SqlMemoryRepository:
         expected_version: int,
     ) -> LearnerMemory:
         payload_hash = event.payload_hash()
-        with self.database.session() as session:
+        with self._event_session(event) as session:
             existing = session.get(MemoryEventRow, event.event_id)
             if existing is not None:
                 if existing.payload_hash != payload_hash:

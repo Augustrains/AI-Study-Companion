@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -39,9 +39,13 @@ class LearningActivityResponse(BaseModel):
     book_id: str | None = Field(default=None, alias="bookId")
     plan_id: str | None = Field(default=None, alias="planId")
     task_id: str | None = Field(default=None, alias="taskId")
-    knowledge_point_ids: list[str] = Field(default_factory=list, alias="knowledgePointIds")
+    knowledge_point_ids: list[str] = Field(
+        default_factory=list, alias="knowledgePointIds"
+    )
 
-    result: LearningActivityResultResponse = Field(default_factory=LearningActivityResultResponse)
+    result: LearningActivityResultResponse = Field(
+        default_factory=LearningActivityResultResponse
+    )
     detail: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -60,14 +64,16 @@ class LearningEventRequest(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    user_id: str = Field(default="user_001", alias="userId", min_length=1)
+    user_id: str | None = Field(default=None, alias="userId", min_length=1)
     task_id: str = Field(alias="taskId", min_length=1)
     task_title: str = Field(default="", alias="taskTitle")
-    event_type: str = Field(alias="eventType", min_length=1)
-    status: str = Field(min_length=1)
+    event_type: Literal["task_completed"] = Field(alias="eventType")
+    status: Literal["completed"]
     plan_id: str = Field(default="", alias="planId")
     book_id: str = Field(default="", alias="bookId")
-    knowledge_point_ids: list[str] = Field(default_factory=list, alias="knowledgePointIds")
+    knowledge_point_ids: list[str] = Field(
+        default_factory=list, alias="knowledgePointIds"
+    )
     detail: dict[str, Any] = Field(default_factory=dict)
     client_request_id: str = Field(default="", alias="clientRequestId")
 

@@ -11,7 +11,9 @@ class MaterialQaSource(BaseModel):
     title: str
     location: str
     excerpt: str
-    knowledge_point_ids: list[str] = Field(default_factory=list, alias="knowledgePointIds")
+    knowledge_point_ids: list[str] = Field(
+        default_factory=list, alias="knowledgePointIds"
+    )
     chapter_id: str = Field(default="", alias="chapterId")
     section_id: str = Field(default="", alias="sectionId")
     content_unit_id: str = Field(default="", alias="contentUnitId")
@@ -22,7 +24,7 @@ class CreateMaterialQaConversationRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     book_id: str = Field(alias="bookId", min_length=1)
-    user_id: str = Field(default="user_001", alias="userId", min_length=1)
+    user_id: str | None = Field(default=None, alias="userId", min_length=1)
 
 
 class CreateMaterialQaConversationResponse(BaseModel):
@@ -40,8 +42,14 @@ class AskMaterialQuestionRequest(BaseModel):
 
     book_id: str = Field(alias="bookId", min_length=1)
     question: str = Field(min_length=1, max_length=2000)
-    user_id: str = Field(default="user_001", alias="userId", min_length=1)
+    user_id: str | None = Field(default=None, alias="userId", min_length=1)
     conversation_id: str | None = Field(default=None, alias="conversationId")
+    request_id: str | None = Field(
+        default=None,
+        alias="requestId",
+        min_length=8,
+        max_length=128,
+    )
     source_ids: list[str] = Field(default_factory=list, alias="sourceIds")
 
 
@@ -51,7 +59,9 @@ class AskMaterialQuestionResponse(BaseModel):
     answer: str
     refused: bool
     citations: list[MaterialQaSource]
-    related_knowledge_points: list[str] = Field(default_factory=list, alias="relatedKnowledgePoints")
+    related_knowledge_points: list[str] = Field(
+        default_factory=list, alias="relatedKnowledgePoints"
+    )
     recommended_action: str | None = Field(default=None, alias="recommendedAction")
     conversation_id: str = Field(alias="conversationId")
     request_id: str = Field(alias="requestId")

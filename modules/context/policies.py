@@ -23,6 +23,8 @@ ASSESSMENT_SAFE_FIELDS = {
     "title",
     "prompt",
     "text",
+    "name",
+    "description",
     "options",
     "knowledgepointid",
     "knowledgepointids",
@@ -34,6 +36,9 @@ ASSESSMENT_SAFE_FIELDS = {
     "hintcount",
     "retrycount",
     "skipped",
+    "availablequestioncount",
+    "availablequestioncounts",
+    "knowledgepoints",
 }
 
 
@@ -55,7 +60,7 @@ class ContextPolicy:
 
 
 class ContextPolicyRegistry:
-    VERSION = "context-policy-v1"
+    VERSION = "context-policy-v2"
 
     def __init__(self) -> None:
         version = self.VERSION
@@ -70,8 +75,8 @@ class ContextPolicyRegistry:
                 False,
                 0,
                 0,
-                3000,
-                1000,
+                8000,
+                1500,
                 0,
             ),
             ContextMode.DIAGNOSIS: ContextPolicy(
@@ -84,8 +89,8 @@ class ContextPolicyRegistry:
                 False,
                 0,
                 80,
-                5000,
-                1500,
+                12000,
+                2000,
                 0,
                 ASSESSMENT_SECRET_FIELDS,
             ),
@@ -99,8 +104,8 @@ class ContextPolicyRegistry:
                 False,
                 0,
                 120,
-                7000,
-                1800,
+                20000,
+                3000,
                 0,
             ),
             ContextMode.TUTOR: ContextPolicy(
@@ -113,8 +118,8 @@ class ContextPolicyRegistry:
                 True,
                 8,
                 40,
-                6000,
-                1800,
+                16000,
+                3000,
                 8,
                 ASSESSMENT_SECRET_FIELDS,
             ),
@@ -128,8 +133,8 @@ class ContextPolicyRegistry:
                 True,
                 6,
                 80,
-                5500,
-                1600,
+                16000,
+                3000,
                 6,
                 ASSESSMENT_SECRET_FIELDS,
             ),

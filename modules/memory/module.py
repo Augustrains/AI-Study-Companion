@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from threading import Lock, RLock
 from typing import TYPE_CHECKING, Any
 
 from modules.common import api as common_api
@@ -18,6 +19,13 @@ class MemoryModule:
 
     def __init__(self, repository: MemoryRepository) -> None:
         self.repository = repository
+        self._aggregate_locks: dict[tuple[str, str], RLock] = {}
+        self._aggregate_locks_guard = Lock()
+
+    def _lock_for(self, user_id: str, learning_domain: str) -> RLock:
+        key = (str(user_id), self._domain(learning_domain))
+        with self._aggregate_locks_guard:
+            return self._aggregate_locks.setdefault(key, RLock())
 
     @staticmethod
     def _domain(value: str) -> str:
@@ -49,6 +57,10 @@ class MemoryModule:
         return self.repository.upsert(memory)
 
     def sync_learner_profile(self, profile: Any) -> LearnerMemory:
+        with self._lock_for(profile.user_id, profile.learning_domain):
+            return self._sync_learner_profile(profile)
+
+    def _sync_learner_profile(self, profile: Any) -> LearnerMemory:
         memory = self.get_learner_memory(profile.user_id, profile.learning_domain)
         known = {str(item) for item in profile.known_knowledge_point_ids if item}
         unknown = {
@@ -88,6 +100,10 @@ class MemoryModule:
         )
 
     def ingest_diagnosis(self, diagnosis: DiagnosisResult) -> LearnerMemory:
+        with self._lock_for(diagnosis.user_id, diagnosis.book_id):
+            return self._ingest_diagnosis(diagnosis)
+
+    def _ingest_diagnosis(self, diagnosis: DiagnosisResult) -> LearnerMemory:
         from modules.diagnosis.models import STATUSES
 
         memory = self.get_learner_memory(diagnosis.user_id, diagnosis.book_id)
@@ -157,8 +173,34 @@ class MemoryModule:
             ),
         )
 
-    #完成任务更新记忆
-    def ingest_task_completion(self, *, user_id: str, learning_domain: str, task_id: str, knowledge_point_ids: list[str], source: str | None = None) -> LearnerMemory:
+    # 完成任务更新记忆
+    def ingest_task_completion(
+        self,
+        *,
+        user_id: str,
+        learning_domain: str,
+        task_id: str,
+        knowledge_point_ids: list[str],
+        source: str | None = None,
+    ) -> LearnerMemory:
+        with self._lock_for(user_id, learning_domain):
+            return self._ingest_task_completion(
+                user_id=user_id,
+                learning_domain=learning_domain,
+                task_id=task_id,
+                knowledge_point_ids=knowledge_point_ids,
+                source=source,
+            )
+
+    def _ingest_task_completion(
+        self,
+        *,
+        user_id: str,
+        learning_domain: str,
+        task_id: str,
+        knowledge_point_ids: list[str],
+        source: str | None = None,
+    ) -> LearnerMemory:
         memory = self.get_learner_memory(user_id, learning_domain)
         now = self.repository.now()
         point_ids = list(

@@ -109,6 +109,8 @@ def test_diagnosis_context_uses_verified_memory_and_hides_secrets(
     assert [item.knowledge_point_id for item in envelope.learner.verified_mastery] == [
         "kp-verified"
     ]
+    assert envelope.learner.verified_mastery[0].user_calibrated_level is None
+    assert envelope.learner.verified_mastery[0].effective_mastery_level == "熟悉"
     assert envelope.learner.self_reported_known_knowledge_point_ids == []
     assert envelope.conversation.recent_messages == []
     assert "correct_answer" not in envelope.workflow.workflow_state["question"]

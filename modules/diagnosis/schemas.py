@@ -12,7 +12,7 @@ class DiagnosticStartRequest(BaseModel):
 
     book_id: str = Field(alias="bookId", min_length=1)
     learning_goal: str = Field(default="", alias="learningGoal", max_length=200)
-    user_id: str = Field(default="user_001", alias="userId", min_length=1)
+    user_id: str | None = Field(default=None, alias="userId", min_length=1)
 
 
 class DiagnosticAnswerRequest(BaseModel):
@@ -54,7 +54,9 @@ class DiagnosticQuestionResponse(BaseModel):
     book_id: str = Field(default="", alias="bookId")
     chapter_id: str = Field(default="", alias="chapterId")
     section_ids: list[str] = Field(default_factory=list, alias="sectionIds")
-    knowledge_point_ids: list[str] = Field(default_factory=list, alias="knowledgePointIds")
+    knowledge_point_ids: list[str] = Field(
+        default_factory=list, alias="knowledgePointIds"
+    )
     task_mode: str = Field(default="diagnostic", alias="taskMode")
 
 

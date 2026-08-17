@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -120,4 +121,29 @@ def test_task_completion_does_not_change_or_create_mastery(tmp_path: Path) -> No
     assert after.confidence == 0.6
     assert after.evidence_ids == ["answer-1"]
     assert result.completed_task_count == 1
+    database.close()
+
+
+def test_concurrent_memory_events_for_one_learner_are_serialized(tmp_path: Path) -> None:
+    database, repository = build_repository(tmp_path / "concurrent.sqlite3")
+    module = MemoryModule(repository)
+
+    def complete(task_id: str) -> None:
+        module.ingest_task_completion(
+            user_id="u1",
+            learning_domain="ml",
+            task_id=task_id,
+            knowledge_point_ids=["kp-1"],
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(complete, ["task-1", "task-2"]))
+
+    memory = module.get_learner_memory("u1", "ml")
+    assert memory.completed_task_count == 2
+    assert memory.state_version == 2
+    assert {item.event_id for item in repository.list_events("u1", "ml-001")} == {
+        "task:u1:ml-001:task-1",
+        "task:u1:ml-001:task-2",
+    }
     database.close()

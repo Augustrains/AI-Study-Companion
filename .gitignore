@@ -30,6 +30,8 @@ data/qdrant-bge-small-zh/
 data/learning_plan/
 data/learning_record/
 data/memory/
+data/*.sqlite3
+data/*.sqlite3-*
 
 # Upstream source repositories are large and reproducible. Keep the curated
 # catalogs and formal material units under data/02-内容与数据 instead.

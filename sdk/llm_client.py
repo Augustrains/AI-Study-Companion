@@ -13,15 +13,31 @@ from dotenv import dotenv_values, load_dotenv
 
 from modules.common.errors import ConfigurationError, ExternalServiceError
 
-
 _PROJECT_ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
+
+
+def generate_messages_compat(
+    client: object,
+    messages: list[dict[str, str]],
+) -> str:
+    """Use role-aware generation when available and preserve simple test clients."""
+
+    method = getattr(client, "generate_messages", None)
+    if callable(method):
+        return method(messages)
+    prompt = "\n\n".join(
+        f"[{message.get('role', 'user')}]\n{message.get('content', '')}"
+        for message in messages
+    )
+    return client.generate(prompt)  # type: ignore[attr-defined]
 
 
 class LLMClient(Protocol):
     """业务 Agent 依赖的最小文本生成接口。"""
 
-    def generate(self, prompt: str) -> str:
-        ...
+    def generate(self, prompt: str) -> str: ...
+
+    def generate_messages(self, messages: list[dict[str, str]]) -> str: ...
 
 
 @dataclass(frozen=True)
@@ -34,7 +50,7 @@ class DeepSeekLLMClient:
     timeout: float = 120.0
 
     @classmethod
-    def from_env(cls) -> "DeepSeekLLMClient":
+    def from_env(cls) -> DeepSeekLLMClient:
         """从环境变量创建客户端，不在构造阶段发起网络请求。"""
 
         file_config = dotenv_values(_PROJECT_ENV_FILE)
@@ -62,12 +78,19 @@ class DeepSeekLLMClient:
                 or os.getenv("DEEPSEEK_API_KEY")
             ),
             model=os.getenv("STUDY_COMPANION_LLM_MODEL", "deepseek-v4-flash"),
-            base_url=os.getenv("STUDY_COMPANION_LLM_BASE_URL", "https://opencode.ai/zen/go/v1"),
+            base_url=os.getenv(
+                "STUDY_COMPANION_LLM_BASE_URL", "https://opencode.ai/zen/go/v1"
+            ),
             timeout=timeout,
         )
 
     def generate(self, prompt: str) -> str:
         """通过 OpenAI-compatible Chat Completions 接口生成回答。"""
+
+        return self.generate_messages([{"role": "user", "content": prompt}])
+
+    def generate_messages(self, messages: list[dict[str, str]]) -> str:
+        """保留 system/user 边界调用 Chat Completions。"""
 
         if not self.api_key:
             raise ConfigurationError(
@@ -77,7 +100,7 @@ class DeepSeekLLMClient:
 
         payload = {
             "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
             "stream": False,
         }
         try:
@@ -100,7 +123,10 @@ class DeepSeekLLMClient:
         except httpx.HTTPStatusError as exc:
             raise ExternalServiceError(
                 "LLM API request failed",
-                details={"provider": "opencode", "status_code": exc.response.status_code},
+                details={
+                    "provider": "opencode",
+                    "status_code": exc.response.status_code,
+                },
                 cause=exc,
             ) from exc
         except (httpx.TimeoutException, httpx.RequestError) as exc:
@@ -137,4 +163,8 @@ class NullLLMClient:
 
     def generate(self, prompt: str) -> str:
         del prompt
+        return ""
+
+    def generate_messages(self, messages: list[dict[str, str]]) -> str:
+        del messages
         return ""

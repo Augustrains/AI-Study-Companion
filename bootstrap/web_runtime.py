@@ -81,5 +81,14 @@ def serve_web(host: str | None = None, backend_port: int | None = None, frontend
             except subprocess.TimeoutExpired:
                 frontend.kill()
         backend.should_exit = True
-        backend_thread.join(timeout=5)
-        dependencies.close()
+        # LLM 请求的默认超时为 120 秒；先等在途请求退出，再关闭
+        # checkpoint/DB，避免活跃请求拿到已关闭资源。
+        backend_thread.join(timeout=130)
+        if backend_thread.is_alive():
+            logger.error("后端未在宽限期内退出，正在强制停止。")
+            backend.force_exit = True
+            backend_thread.join(timeout=10)
+        if backend_thread.is_alive():
+            logger.error("后端仍有在途请求，为避免关闭活跃资源，交由进程退出时回收。")
+        else:
+            dependencies.close()

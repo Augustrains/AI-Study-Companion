@@ -13,6 +13,27 @@ from .field_rules import validate_learning_activity
 from .models import LearningActivity
 
 
+def _without_answer_secrets(value: Any) -> Any:
+    """Recursively remove answer keys from persisted and legacy activity data."""
+
+    if isinstance(value, dict):
+        result = {}
+        for key, item in value.items():
+            normalized = "".join(char for char in str(key).lower() if char.isalnum())
+            if (
+                normalized.startswith("correctanswer")
+                or normalized in {"answerkey", "solution", "referenceanswer"}
+            ):
+                continue
+            result[str(key)] = _without_answer_secrets(item)
+        return result
+    if isinstance(value, list):
+        return [_without_answer_secrets(item) for item in value]
+    if isinstance(value, tuple):
+        return [_without_answer_secrets(item) for item in value]
+    return value
+
+
 class LearningRecordModule:
     """从 data 下的活动 JSON 读取并整理最近活动。"""
 
@@ -79,7 +100,10 @@ class LearningRecordModule:
             return existing
 
         now = datetime.now(timezone.utc).isoformat()
-        result_items = [common_api.serialization.to_data(item) for item in diagnosis.results]
+        result_items = [
+            _without_answer_secrets(common_api.serialization.to_data(item))
+            for item in diagnosis.results
+        ]
         correct_count = sum(int(item.get("correct", 0)) for item in result_items)
         total_count = sum(int(item.get("total", 0)) for item in result_items)
         accuracy = correct_count / total_count if total_count else 0.0
@@ -103,7 +127,9 @@ class LearningRecordModule:
             },
             detail={
                 "diagnosis_id": diagnosis.diagnosis_id,
-                "answer_records": common_api.serialization.to_data(diagnosis.answer_records),
+                "answer_records": _without_answer_secrets(
+                    common_api.serialization.to_data(diagnosis.answer_records)
+                ),
             },
             client_request_id=activity_id,
             source="diagnosis",
@@ -182,9 +208,17 @@ class LearningRecordModule:
                 details={"status": status},
             )
 
-        if client_request_id:
+        effective_request_id = client_request_id.strip() or (
+            f"{event_type}:{plan_id or book_id}:{task_id}"
+        )
+        if effective_request_id:
             existing = next(
-                (item for item in self._read_activities() if item.user_id == user_id and item.client_request_id == client_request_id),
+                (
+                    item
+                    for item in self._read_activities()
+                    if item.user_id == user_id
+                    and item.client_request_id == effective_request_id
+                ),
                 None,
             )
             if existing is not None:
@@ -196,6 +230,7 @@ class LearningRecordModule:
             "in_progress": "进行中",
         }.get(status, status)
         display_task = task_title or "学习任务"
+        safe_detail = _without_answer_secrets(detail or {})
         activity = LearningActivity(
             id=f"activity_{event_type}_{task_id}_{uuid4().hex[:10]}",
             user_id=user_id,
@@ -205,15 +240,15 @@ class LearningRecordModule:
             activity_type=event_type,
             status=activity_status,
             title="完成学习任务",
-        description=f"{display_task} 计划 {display_status}",
+            description=f"{display_task} 计划 {display_status}",
             occurred_at=now,
             book_id=book_id,
             plan_id=plan_id,
             task_id=task_id,
             knowledge_point_ids=knowledge_point_ids or [],
             result={"task_status": status, "task_status_label": display_status},
-            detail={"task_title": display_task, **(detail or {})},
-            client_request_id=client_request_id,
+            detail={"task_title": display_task, **safe_detail},
+            client_request_id=effective_request_id,
             source="web",
         )
         validated = validate_learning_activity(activity)
@@ -229,6 +264,6 @@ class LearningRecordModule:
 
         activities: list[LearningActivity] = []
         for item in payload:
-            validated = validate_learning_activity(item)
+            validated = validate_learning_activity(_without_answer_secrets(item))
             activities.append(common_api.serialization.from_data(LearningActivity, validated))
         return activities

@@ -9,10 +9,11 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from modules.common.errors import ValidationAppError
-from modules.diagnosis.services import DiagnosisResultStore
-from modules.diagnosis.models import STATUSES
 from modules.common import api as common_api
+from modules.common.errors import ResourceNotFoundError, ValidationAppError
+from modules.context.builder import ContextBuilder
+from modules.diagnosis.models import STATUSES
+from modules.diagnosis.services import DiagnosisResultStore
 
 from .agent import LearningPlanAgent, LearningPlanAgentInput
 from .models import LEARNING_TASK_TYPES_BY_SOURCE, LearningTask
@@ -41,9 +42,19 @@ KNOWLEDGE_POINT_NAMES = {
 class LearningPlanModule:
     """从已完成的诊断会话生成前端学习任务。"""
 
-    DEFAULT_PATH = Path(__file__).resolve().parents[2] / "data" / "learning_plan" / "plans.json"
+    DEFAULT_PATH = (
+        Path(__file__).resolve().parents[2] / "data" / "learning_plan" / "plans.json"
+    )
 
-    def __init__(self, results: DiagnosisResultStore, agent: LearningPlanAgent | None = None, path: str | Path | None = None, memory: "MemoryModule | None" = None, learner_profile: "LearnerProfileWorkflow | None" = None) -> None:
+    def __init__(
+        self,
+        results: DiagnosisResultStore,
+        agent: LearningPlanAgent | None = None,
+        path: str | Path | None = None,
+        memory: MemoryModule | None = None,
+        learner_profile: LearnerProfileWorkflow | None = None,
+        context_builder: ContextBuilder | None = None,
+    ) -> None:
         """保存诊断会话存储，并允许注入自定义计划生成代理。"""
         self.results = results
         self.agent = agent or LearningPlanAgent()
@@ -52,29 +63,134 @@ class LearningPlanModule:
         self.store = common_api.json_storage.JsonStore()
         self.memory = memory
         self.learner_profile = learner_profile
+        self.context_builder = context_builder
 
-    def get_saved(self, *, book_id: str, diagnostic_id: str | None = None) -> dict[str, Any] | None:
-        payload = self.reader.read(allow_missing=True, allow_empty=False)
-        if payload == {}:
+    def get_saved(
+        self,
+        *,
+        book_id: str,
+        user_id: str,
+        diagnostic_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        payload = self._read_plan_records()
+        selected = self._latest_record(
+            payload,
+            book_id=book_id,
+            user_id=user_id,
+            diagnostic_id=diagnostic_id,
+        )
+        if selected is None:
             return None
-        if not isinstance(payload, dict):
-            raise common_api.errors.StorageReadError("learning plan resource must be a JSON object")
-        candidates = [item for item in payload.values() if isinstance(item, dict) and item.get("bookId") == book_id and item.get("status") != "completed"]
-        if diagnostic_id:
-            candidates = [item for item in candidates if item.get("diagnosticId") == diagnostic_id]
-        if not candidates:
-            return None
-        plan = candidates[-1].get("plan")
+        _key, record = selected
+        plan = record.get("plan")
         if not isinstance(plan, dict):
             return plan
-        # 兼容 source/type 尚未加入前生成的历史计划。
+        # 兼容 source/type 尚未加入前生成的历史计划。已完成计划仍然
+        # 是该用户当前教材的最新计划，供 Today 和查询页展示。
         normalized = dict(plan)
         normalized["tasks"] = [
-            self._normalize_task(item, candidates[-1])
+            self._normalize_task(item, record)
             for item in plan.get("tasks", [])
             if isinstance(item, dict)
         ]
         return normalized
+
+    def _read_plan_records(self) -> dict[str, Any]:
+        payload = self.reader.read(allow_missing=True, allow_empty=False)
+        if payload == {}:
+            return {}
+        if not isinstance(payload, dict):
+            raise common_api.errors.StorageReadError(
+                "learning plan resource must be a JSON object"
+            )
+        return payload
+
+    @staticmethod
+    def _record_owner(record: dict[str, Any]) -> str:
+        # 无法确定归属的旧记录不能默认暴露给任何用户。
+        return str(record.get("userId") or "")
+
+    @classmethod
+    def _latest_record(
+        cls,
+        payload: dict[str, Any],
+        *,
+        book_id: str,
+        user_id: str,
+        diagnostic_id: str | None = None,
+    ) -> tuple[str, dict[str, Any]] | None:
+        """Return the newest matching record, including completed legacy snapshots."""
+
+        for key, record in reversed(list(payload.items())):
+            if not isinstance(record, dict) or record.get("bookId") != book_id:
+                continue
+            if cls._record_owner(record) != user_id:
+                continue
+            if diagnostic_id and record.get("diagnosticId") != diagnostic_id:
+                continue
+            return str(key), record
+        return None
+
+    @classmethod
+    def _latest_record_for_task(
+        cls,
+        payload: dict[str, Any],
+        *,
+        user_id: str,
+        task_id: str,
+        book_id: str = "",
+        plan_id: str = "",
+    ) -> tuple[str, dict[str, Any], dict[str, Any]] | None:
+        """Resolve a task only from the latest canonical record for each book."""
+
+        target_book_id = book_id
+        if plan_id:
+            referenced_book_id = next(
+                (
+                    str(record.get("bookId", ""))
+                    for key, record in reversed(list(payload.items()))
+                    if isinstance(record, dict)
+                    and cls._record_owner(record) == user_id
+                    and (
+                        str(key) == plan_id
+                        or record.get("planId") == plan_id
+                        or record.get("diagnosticId") == plan_id
+                    )
+                ),
+                None,
+            )
+            if referenced_book_id is None:
+                return None
+            if target_book_id and referenced_book_id != target_book_id:
+                return None
+            target_book_id = referenced_book_id
+
+        seen_books: set[str] = set()
+        for key, record in reversed(list(payload.items())):
+            if not isinstance(record, dict) or cls._record_owner(record) != user_id:
+                continue
+            record_book_id = str(record.get("bookId", ""))
+            if target_book_id and record_book_id != target_book_id:
+                continue
+            # 旧数据可能为同一教材保存多个完整快照。plan_id
+            # 只用于定位教材，实际状态始终修改该教材的最新 canonical 记录。
+            if record_book_id in seen_books:
+                continue
+            seen_books.add(record_book_id)
+            plan = record.get("plan")
+            if not isinstance(plan, dict):
+                continue
+            task = next(
+                (
+                    item
+                    for item in plan.get("tasks", [])
+                    if isinstance(item, dict) and item.get("id") == task_id
+                ),
+                None,
+            )
+            if task is not None:
+                return str(key), record, task
+        return None
 
     @staticmethod
     def _normalize_task(task: dict[str, Any], record: dict[str, Any]) -> dict[str, Any]:
@@ -84,15 +200,20 @@ class LearningPlanModule:
             "能力练习": "practice",
             "资料问答": "qa_review",
         }
-        normalized["type"] = legacy_types.get(str(normalized.get("type", "")), normalized.get("type", ""))
+        normalized["type"] = legacy_types.get(
+            str(normalized.get("type", "")), normalized.get("type", "")
+        )
         if not normalized.get("source"):
-            normalized["source"] = "diagnostic" if record.get("diagnosticId") else "material_qa"
+            normalized["source"] = (
+                "diagnostic" if record.get("diagnosticId") else "material_qa"
+            )
         return normalized
 
     def create_task_plan(
         self,
         *,
         book_id: str,
+        user_id: str,
         task: dict[str, Any],
         goal: str,
         goal_level: str,
@@ -106,7 +227,11 @@ class LearningPlanModule:
         Both diagnostic-generated tasks and material-QA tasks use this entry
         point so task shape and local persistence stay consistent.
         """
-        existing = self.get_saved(book_id=book_id, diagnostic_id=diagnostic_id or None)
+        existing = self.get_saved(
+            book_id=book_id,
+            diagnostic_id=diagnostic_id or None,
+            user_id=user_id,
+        )
         if existing is None:
             plan = {
                 "book": self._book(book_id),
@@ -118,57 +243,85 @@ class LearningPlanModule:
             }
         else:
             plan = dict(existing)
+            plan.pop("status", None)
             plan["tasks"] = [*existing.get("tasks", []), task]
-            plan["resources"] = self._merge_resources(existing.get("resources", []), resources or [])
-            plan["advice"] = list(dict.fromkeys([*existing.get("advice", []), *(advice or [])]))
-        key = plan_key or f"{book_id}:{diagnostic_id or 'material'}:{task['id']}"
-        self.persist_plan(
+            plan["resources"] = self._merge_resources(
+                existing.get("resources", []), resources or []
+            )
+            plan["advice"] = list(
+                dict.fromkeys([*existing.get("advice", []), *(advice or [])])
+            )
+        key = (
+            plan_key
+            or f"{user_id}:{book_id}:{diagnostic_id or 'material'}:{task['id']}"
+        )
+        return self.persist_plan(
+            user_id=user_id,
             book_id=book_id,
             diagnostic_id=diagnostic_id,
             plan=plan,
             plan_key=key,
         )
-        return plan
 
     def persist_plan(
         self,
         *,
+        user_id: str,
         book_id: str,
         diagnostic_id: str,
         plan: dict[str, Any],
         plan_key: str,
     ) -> dict[str, Any]:
-        """Persist any plan shape through the single local storage gateway."""
+        """Persist the plan by updating the newest user/book record in place."""
+
+        payload = self._read_plan_records()
+        canonical = self._latest_record(
+            payload,
+            book_id=book_id,
+            user_id=user_id,
+        )
+        canonical_key = canonical[0] if canonical is not None else plan_key
+        previous = canonical[1] if canonical is not None else {}
+        effective_diagnostic_id = diagnostic_id or str(
+            previous.get("diagnosticId", "")
+        )
+        tasks = [item for item in plan.get("tasks", []) if isinstance(item, dict)]
+        completed = bool(tasks) and all(
+            item.get("status") == "completed" for item in tasks
+        )
+        stored_plan = dict(plan)
+        stored_plan["status"] = "completed" if completed else "active"
         self.store.save(
             path=self.reader.path,
-            content={"bookId": book_id, "diagnosticId": diagnostic_id, "plan": plan},
+            content={
+                "userId": user_id,
+                "bookId": book_id,
+                "diagnosticId": effective_diagnostic_id,
+                "status": stored_plan["status"],
+                "plan": stored_plan,
+            },
             mode="upsert",
-            key_path=[plan_key],
+            key_path=[canonical_key],
         )
-        return plan
+        return stored_plan
 
-    def complete_task(self, *, user_id: str, task_id: str, plan_id: str = "", book_id: str = "") -> dict[str, Any]:
+    def complete_task(
+        self, *, user_id: str, task_id: str, plan_id: str = "", book_id: str = ""
+    ) -> dict[str, Any]:
         """Complete a server-owned task, update its plan, and update memory."""
-        payload = self.reader.read(allow_missing=True, allow_empty=False)
-        if not isinstance(payload, dict):
-            raise common_api.errors.StorageReadError("learning plan resource must be a JSON object")
-        match_key = None
-        match_record = None
-        match_task = None
-        for key, record in payload.items():
-            if not isinstance(record, dict) or (book_id and record.get("bookId") != book_id):
-                continue
-            if plan_id and key != plan_id and record.get("planId") != plan_id and record.get("diagnosticId") != plan_id:
-                continue
-            plan = record.get("plan")
-            if not isinstance(plan, dict):
-                continue
-            task = next((item for item in plan.get("tasks", []) if isinstance(item, dict) and item.get("id") == task_id), None)
-            if task is not None:
-                match_key, match_record, match_task = key, record, task
-                break
-        if match_record is None or match_task is None:
-            raise ValidationAppError("learning task not found", details={"task_id": task_id})
+        payload = self._read_plan_records()
+        selected = self._latest_record_for_task(
+            payload,
+            user_id=user_id,
+            task_id=task_id,
+            book_id=book_id,
+            plan_id=plan_id,
+        )
+        if selected is None:
+            raise ResourceNotFoundError(
+                "learning task not found", details={"task_id": task_id}
+            )
+        match_key, match_record, match_task = selected
 
         plan = dict(match_record["plan"])
         tasks = [dict(item) for item in plan.get("tasks", [])]
@@ -176,22 +329,31 @@ class LearningPlanModule:
         for task in tasks:
             if task.get("id") == task_id:
                 task["status"] = "completed"
-        all_completed = bool(tasks) and all(item.get("status") == "completed" for item in tasks)
+        all_completed = bool(tasks) and all(
+            item.get("status") == "completed" for item in tasks
+        )
         plan["tasks"] = tasks
-        if all_completed:
-            plan["status"] = "completed"
-            match_record = {**match_record, "status": "completed"}
-        else:
-            match_record = {**match_record, "plan": plan}
-        match_record["plan"] = plan
-        self.store.save(path=self.reader.path, content=match_record, mode="upsert", key_path=[match_key])
+        plan["status"] = "completed" if all_completed else "active"
+        match_record = {
+            **match_record,
+            "status": plan["status"],
+            "plan": plan,
+        }
+        self.store.save(
+            path=self.reader.path,
+            content=match_record,
+            mode="upsert",
+            key_path=[match_key],
+        )
 
-        memories = []
-        if self.memory and match_record.get("bookId") and not was_completed:
+        memory_synced = False
+        if self.memory and match_record.get("bookId"):
             learning_domain = {"ml": "ml-001", "dl": "dl-001"}.get(
                 str(match_record["bookId"]), str(match_record["bookId"])
             )
-            memories = self.memory.ingest_task_completion(
+            # 即使计划已标记完成也重放这个确定性事件。仓库会对
+            # 相同 event_id 幂等去重，同时允许首次 memory 写入失败后重试补齐。
+            self.memory.ingest_task_completion(
                 user_id=user_id,
                 learning_domain=learning_domain,
                 task_id=task_id,
@@ -201,10 +363,11 @@ class LearningPlanModule:
                     or []
                 ),
             )
+            memory_synced = True
         return {
             "plan": plan,
             "planCompleted": all_completed,
-            "memoryUpdated": bool(memories),
+            "memoryUpdated": memory_synced,
             "bookId": match_record.get("bookId", ""),
             "planId": match_key,
             "knowledgePointIds": list(
@@ -215,9 +378,15 @@ class LearningPlanModule:
             "alreadyCompleted": was_completed,
         }
 
-    def generate(self, *, diagnostic_id: str, book_id: str, goal: str) -> dict[str, Any]:
+    def generate(
+        self, *, diagnostic_id: str, book_id: str, goal: str, user_id: str | None = None
+    ) -> dict[str, Any]:
         """校验输入后，生成任务、学习建议及相关资源。"""
-        diagnosis = self.results.get(diagnostic_id)
+        diagnosis = (
+            self.results.get_owned(diagnostic_id, user_id)
+            if user_id is not None
+            else self.results.get(diagnostic_id)
+        )
         # 兼容前端教材编号和后端题库编号，防止跨教材生成计划。
         expected_book_id = BOOK_TO_QUESTION_BANK.get(book_id, book_id)
         if diagnosis.book_id != expected_book_id:
@@ -226,7 +395,7 @@ class LearningPlanModule:
                 details={"diagnostic_id": diagnostic_id, "book_id": book_id},
             )
         result_payload = common_api.serialization.to_data(diagnosis)
-        #从已完成的诊断会话读取用户答题结果
+        # 从已完成的诊断会话读取用户答题结果
         results = result_payload.get("results", [])
         answer_result = result_payload["answer_result"]
         nested_records = answer_result["answer_records"]
@@ -236,7 +405,6 @@ class LearningPlanModule:
                 "question_id": item["question"]["id"],
                 "knowledge_point_ids": item["question"].get("knowledge_point_ids", []),
                 "submitted_answer": item["submitted_answer"],
-                "correct_answer": item["correct_answer"],
                 "is_correct": item["is_correct"],
                 "skipped": item["skipped"],
                 "hint_count": item["hint_count"],
@@ -247,43 +415,91 @@ class LearningPlanModule:
         ]
         # 诊断按知识点统计，计划按能力聚合；知识点和章节作为任务证据保留。
         planning_units = self._build_planning_units(questions, answer_records, results)
-        #按照能力掌握排序
+        # 按照能力掌握排序
         ordered_results = sorted(planning_units, key=self._status_rank)
         fallback_tasks = [
             self._build_task(diagnostic_id, item, index, goal)
             for index, item in enumerate(ordered_results)
         ]
         question_evidence = self._build_question_evidence(questions, answer_records)
-        learner_preferences = self._learner_preferences(diagnosis.user_id, diagnosis.book_id)
+        diagnostic_summary = self._diagnostic_summary(question_evidence)
+        knowledge_point_contexts = self._knowledge_point_contexts(
+            results, answer_records
+        )
+        candidate_resources = self._resource_candidates(book_id, questions, results)
+        calibration = {
+            "adjustment": diagnosis.calibration,
+            "reason": diagnosis.calibration_reason,
+        }
+        context = None
+        if self.context_builder is not None:
+            context = self.context_builder.for_planning(
+                request_id=f"learning-plan:{diagnostic_id}",
+                user_id=diagnosis.user_id,
+                book_id=diagnosis.book_id,
+                current_input=goal,
+                learning_goal=goal,
+                diagnosis_summary=diagnostic_summary,
+                workflow_state={
+                    "knowledgePointResults": knowledge_point_contexts,
+                    "abilityUnits": ordered_results,
+                    "questionEvidence": question_evidence,
+                    "candidateResources": candidate_resources,
+                    "calibration": calibration,
+                },
+                knowledge_point_ids=[
+                    str(item.get("knowledge_point_id", ""))
+                    for item in results
+                    if item.get("knowledge_point_id")
+                ],
+            )
+        learner_preferences = (
+            self._context_preferences(context.learner.preferences)
+            if context is not None
+            else self._learner_preferences(diagnosis.user_id, diagnosis.book_id)
+        )
         session_budget = learner_preferences.get("sessionTimeBudgetMinutes")
+        constraints = {
+            "allowedTaskTypes": list(LEARNING_TASK_TYPES_BY_SOURCE["diagnostic"]),
+            "minTaskCount": len(ordered_results),
+            "maxTaskCount": len(ordered_results),
+            "minTaskMinutes": 5,
+            "maxTaskMinutes": max(5, min(60, int(session_budget)))
+            if session_budget
+            else 60,
+        }
+        if context is not None:
+            context.workflow.workflow_state.update(
+                {
+                    "book": self._book(book_id),
+                    "goalLevel": self._goal_level(results),
+                    "learnerPreferences": learner_preferences,
+                    "constraints": constraints,
+                }
+            )
         agent_input = LearningPlanAgentInput(
             book=self._book(book_id),
             goal=goal,
             goal_level=self._goal_level(results),
-            diagnostic_summary=self._diagnostic_summary(question_evidence),
-            knowledge_point_results=self._knowledge_point_contexts(results, answer_records),
+            diagnostic_summary=diagnostic_summary,
+            knowledge_point_results=knowledge_point_contexts,
             ability_units=ordered_results,
             question_evidence=question_evidence,
-            candidate_resources=self._resource_candidates(book_id, questions, results),
-            calibration={
-                "adjustment": diagnosis.calibration,
-                "reason": diagnosis.calibration_reason,
-            },
+            candidate_resources=candidate_resources,
+            calibration=calibration,
             learner_preferences=learner_preferences,
-            constraints={
-                "allowedTaskTypes": list(LEARNING_TASK_TYPES_BY_SOURCE["diagnostic"]),
-                "minTaskCount": len(ordered_results),
-                "maxTaskCount": len(ordered_results),
-                "minTaskMinutes": 5,
-                "maxTaskMinutes": max(5, min(60, int(session_budget))) if session_budget else 60,
-            },
+            constraints=constraints,
+            context=context,
         )
         plan = self.agent.build(agent_input, fallback_tasks=fallback_tasks)
-        self.persist_plan(
+        if context is not None:
+            self.context_builder.record_trace(context)
+        plan = self.persist_plan(
+            user_id=diagnosis.user_id,
             book_id=book_id,
             diagnostic_id=diagnostic_id,
             plan=plan,
-            plan_key=f"{book_id}:{diagnostic_id}",
+            plan_key=f"{diagnosis.user_id}:{book_id}:{diagnostic_id}",
         )
         return plan
 
@@ -297,6 +513,7 @@ class LearningPlanModule:
         minutes: int,
         expected_completion_date: str,
         resources: list[dict[str, Any]],
+        user_id: str = "user_001",
     ) -> dict[str, Any]:
         """根据资料问答来源创建并持久化一个自定义学习任务。"""
 
@@ -317,14 +534,38 @@ class LearningPlanModule:
         ).to_dict()
 
         return self.create_task_plan(
+            user_id=user_id,
             book_id=book_id,
             task=task,
             goal=goal,
             goal_level="自定义学习目标",
             advice=["建议先阅读关联教材，再回到资料问答中进行复习和追问。"],
             resources=resources,
-            plan_key=f"{book_id}:material:{task_id}",
+            plan_key=f"{user_id}:{book_id}:material:{task_id}",
         )
+
+    @staticmethod
+    def _context_preferences(preferences: dict[str, Any]) -> dict[str, Any]:
+        if not preferences:
+            return {}
+        duration = preferences.get("sessionTimeBudgetMinutes")
+        if duration is None:
+            duration = preferences.get("session_duration_minutes")
+        result = {
+            "activityTypes": list(
+                preferences.get("activityTypes")
+                or preferences.get("activity_types")
+                or []
+            ),
+            "contentStyle": preferences.get("contentStyle")
+            or preferences.get("content_style", ""),
+            "difficulty": preferences.get("difficulty", ""),
+            "learningFrequency": preferences.get("learningFrequency")
+            or preferences.get("learning_frequency", ""),
+        }
+        if duration is not None:
+            result["sessionTimeBudgetMinutes"] = int(duration)
+        return result
 
     @staticmethod
     def _knowledge_points_for_resources(resources: list[dict[str, Any]]) -> list[str]:
@@ -332,13 +573,17 @@ class LearningPlanModule:
         points = {
             str(point_id)
             for item in resources
-            for point_id in (item.get("knowledgePointIds") or item.get("knowledge_point_ids") or [])
+            for point_id in (
+                item.get("knowledgePointIds") or item.get("knowledge_point_ids") or []
+            )
             if point_id
         }
         return sorted(points) or ["unknown"]
 
     @staticmethod
-    def _merge_resources(existing: list[dict[str, Any]], incoming: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _merge_resources(
+        existing: list[dict[str, Any]], incoming: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         merged: dict[str, dict[str, Any]] = {}
         for resource in [*existing, *incoming]:
             key = str(resource.get("title") or resource.get("id") or len(merged))
@@ -352,12 +597,17 @@ class LearningPlanModule:
             "ml": {"id": "ml", "title": "《机器学习》", "shortTitle": "机器学习"},
             "dl": {"id": "dl", "title": "《深度学习》", "shortTitle": "深度学习"},
         }
-        return books.get(book_id, {"id": book_id, "title": book_id, "shortTitle": book_id})
+        return books.get(
+            book_id, {"id": book_id, "title": book_id, "shortTitle": book_id}
+        )
 
     @staticmethod
     def _goal_level(results: list[dict[str, Any]]) -> str:
         """根据所有知识点的诊断状态推断用户当前目标层级。"""
-        statuses = [str(item.get("calibrated_status") or item.get("ai_status") or "") for item in results]
+        statuses = [
+            str(item.get("calibrated_status") or item.get("ai_status") or "")
+            for item in results
+        ]
         if not statuses:
             return ""
         if all(status == STATUSES[-1] for status in statuses):
@@ -369,13 +619,17 @@ class LearningPlanModule:
     @staticmethod
     def _effective_status(result: dict[str, Any]) -> str:
         """优先使用校准状态，其次使用模型状态，最后回退到最低状态。"""
-        return result.get("calibrated_status") or result.get("ai_status") or result.get("status") or STATUSES[0]
+        return (
+            result.get("calibrated_status")
+            or result.get("ai_status")
+            or result.get("status")
+            or STATUSES[0]
+        )
 
     def _status_rank(self, result: dict[str, Any]) -> int:
         """返回诊断状态在预设状态序列中的位置，用于任务排序。"""
         status = self._effective_status(result)
         return STATUSES.index(status) if status in STATUSES else 0
-    
 
     def _build_planning_units(
         self,
@@ -384,23 +638,31 @@ class LearningPlanModule:
         results: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
         """把知识点诊断证据聚合成能力级计划单元。"""
-        result_by_point = {str(item.get("knowledge_point_id")): item for item in results}
-        records_by_question = {str(item.get("question_id")): item for item in answer_records}
-        #记录能力
+        result_by_point = {
+            str(item.get("knowledge_point_id")): item for item in results
+        }
+        records_by_question = {
+            str(item.get("question_id")): item for item in answer_records
+        }
+        # 记录能力
         units: dict[str, dict[str, Any]] = {}
         for question in questions:
             question_id = str(question.get("id", ""))
-            #获取题目所属的能力
-            ability_ids = [str(item) for item in question.get("ability_ids", []) if item]
+            # 获取题目所属的能力
+            ability_ids = [
+                str(item) for item in question.get("ability_ids", []) if item
+            ]
             if not ability_ids:
-                ability_ids = [f"knowledge:{question.get('tag', 'unknown')}" ]
-            #获取题目所属的作答记录
+                ability_ids = [f"knowledge:{question.get('tag', 'unknown')}"]
+            # 获取题目所属的作答记录
             record = records_by_question.get(question_id, {})
-            #获取题目所属的知识点
-            knowledge_ids = [str(item) for item in question.get("knowledge_point_ids", []) if item]
+            # 获取题目所属的知识点
+            knowledge_ids = [
+                str(item) for item in question.get("knowledge_point_ids", []) if item
+            ]
             if not knowledge_ids and question.get("tag"):
                 knowledge_ids = [str(question["tag"])]
-            #按能力聚合
+            # 按能力聚合
             for ability_id in ability_ids:
                 unit = units.setdefault(
                     ability_id,
@@ -414,37 +676,54 @@ class LearningPlanModule:
                         "skipped": 0,
                         "incorrect": 0,
                         "total": 0,
-                        "statuses": [], #关联知识点的掌握状态
+                        "statuses": [],  # 关联知识点的掌握状态
                     },
                 )
                 unit["question_ids"].append(question_id)
                 unit["correct"] += int(bool(record.get("is_correct")))
-                skipped = bool(record.get("skipped") or not record.get("submitted_answer"))
+                skipped = bool(
+                    record.get("skipped") or not record.get("submitted_answer")
+                )
                 unit["skipped"] += int(skipped)
                 unit["answered"] += int(not skipped)
                 unit["incorrect"] += int(not skipped and not record.get("is_correct"))
                 unit["total"] += 1
-                unit["knowledge_point_ids"] = sorted(set(unit["knowledge_point_ids"]) | set(knowledge_ids))
+                unit["knowledge_point_ids"] = sorted(
+                    set(unit["knowledge_point_ids"]) | set(knowledge_ids)
+                )
                 chapter_id = str(question.get("chapter_id", ""))
                 if chapter_id:
-                    unit["chapter_ids"] = sorted(set(unit["chapter_ids"]) | {chapter_id})
+                    unit["chapter_ids"] = sorted(
+                        set(unit["chapter_ids"]) | {chapter_id}
+                    )
                 unit["statuses"].extend(
                     self._effective_status(result_by_point[item])
                     for item in knowledge_ids
                     if item in result_by_point
                 )
-        #目前是采用短板规则，即直接返回最弱
+        # 目前是采用短板规则，即直接返回最弱
         for unit in units.values():
-            unit["status"] = min(unit["statuses"], key=lambda value: STATUSES.index(value)) if unit["statuses"] else STATUSES[0]
+            unit["status"] = (
+                min(unit["statuses"], key=lambda value: STATUSES.index(value))
+                if unit["statuses"]
+                else STATUSES[0]
+            )
             unit.pop("statuses", None)
         return list(units.values())
-    
-    #生成任务字段
-    def _build_task(self, diagnostic_id: str, result: dict[str, Any], index: int, goal: str) -> dict[str, Any]:
+
+    # 生成任务字段
+    def _build_task(
+        self, diagnostic_id: str, result: dict[str, Any], index: int, goal: str
+    ) -> dict[str, Any]:
         """把一个能力级计划单元转换为任务，知识点是任务的支撑范围。"""
         ability_id = str(result.get("ability_id", "ability"))
-        #把内部能力 ID 转换为用户可读名称
-        name = {"math": "数学能力", "algorithm": "算法能力", "programming": "编程能力", "conceptual": "概念理解能力"}.get(ability_id, ability_id.replace("_", " "))
+        # 把内部能力 ID 转换为用户可读名称
+        name = {
+            "math": "数学能力",
+            "algorithm": "算法能力",
+            "programming": "编程能力",
+            "conceptual": "概念理解能力",
+        }.get(ability_id, ability_id.replace("_", " "))
         status = str(result.get("status", STATUSES[0]))
         correct = int(result.get("correct", 0))
         total = int(result.get("total", 0))
@@ -486,7 +765,11 @@ class LearningPlanModule:
             "correctQuestions": correct,
             "incorrectQuestions": answered - correct,
             "accuracy": round(correct / answered * 100, 2) if answered else 0.0,
-            "evidenceCoverage": "high" if total and skipped == 0 else "medium" if answered else "low",
+            "evidenceCoverage": "high"
+            if total and skipped == 0
+            else "medium"
+            if answered
+            else "low",
         }
 
     @staticmethod
@@ -500,25 +783,29 @@ class LearningPlanModule:
             question_id = str(question.get("id", ""))
             record = records.get(question_id, {})
             submitted_id = str(record.get("submitted_answer", ""))
-            correct_id = str(record.get("correct_answer", ""))
             options = {
                 str(option.get("id", "")): str(option.get("text", ""))
                 for option in question.get("options", [])
                 if isinstance(option, dict)
             }
             skipped = bool(record.get("skipped") or not submitted_id)
-            outcome = "skipped" if skipped else "correct" if record.get("is_correct") else "incorrect"
+            outcome = (
+                "skipped"
+                if skipped
+                else "correct"
+                if record.get("is_correct")
+                else "incorrect"
+            )
             evidence.append(
                 {
                     "questionId": question_id,
                     "title": str(question.get("title", "")),
                     "submittedAnswerId": submitted_id,
                     "submittedAnswerText": options.get(submitted_id, ""),
-                    "correctAnswerId": correct_id,
-                    "correctAnswerText": options.get(correct_id, ""),
                     "outcome": outcome,
                     "knowledgePointIds": list(
-                        question.get("knowledge_point_ids") or ([question.get("tag")] if question.get("tag") else [])
+                        question.get("knowledge_point_ids")
+                        or ([question.get("tag")] if question.get("tag") else [])
                     ),
                     "abilityIds": list(question.get("ability_ids", [])),
                     "chapterId": str(question.get("chapter_id", "")),
@@ -542,11 +829,23 @@ class LearningPlanModule:
             point_records = [
                 item
                 for item in answer_records
-                if point_id in (item.get("knowledge_point_ids") or [item.get("knowledge_point_id", "")])
+                if point_id
+                in (
+                    item.get("knowledge_point_ids")
+                    or [item.get("knowledge_point_id", "")]
+                )
             ]
-            answered = [item for item in point_records if item.get("submitted_answer") and not item.get("skipped")]
-            algorithm_level = str(result.get("mastery_level") or result.get("ai_status") or STATUSES[0])
-            calibrated_level = result.get("user_calibrated_level") or result.get("calibrated_status")
+            answered = [
+                item
+                for item in point_records
+                if item.get("submitted_answer") and not item.get("skipped")
+            ]
+            algorithm_level = str(
+                result.get("mastery_level") or result.get("ai_status") or STATUSES[0]
+            )
+            calibrated_level = result.get("user_calibrated_level") or result.get(
+                "calibrated_status"
+            )
             contexts.append(
                 {
                     "knowledgePointId": point_id,
@@ -556,13 +855,19 @@ class LearningPlanModule:
                     "effectiveMasteryLevel": str(calibrated_level or algorithm_level),
                     "masteryScore": float(result.get("mastery_score", 0.0)),
                     "confidence": float(result.get("confidence", 0.0)),
-                    "roundCorrect": sum(bool(item.get("is_correct")) for item in answered),
-                    "roundIncorrect": sum(not item.get("is_correct") for item in answered),
+                    "roundCorrect": sum(
+                        bool(item.get("is_correct")) for item in answered
+                    ),
+                    "roundIncorrect": sum(
+                        not item.get("is_correct") for item in answered
+                    ),
                     "roundAnswered": len(answered),
                     "roundSkipped": len(point_records) - len(answered),
                     "roundTotal": len(point_records),
                     "memoryStatus": str(result.get("memory_status", "未验证")),
-                    "memoryStabilityDays": float(result.get("memory_stability_days", 0.0)),
+                    "memoryStabilityDays": float(
+                        result.get("memory_stability_days", 0.0)
+                    ),
                     "nextReviewAt": result.get("next_review_at"),
                     "evidenceSummary": result.get("evidence_summary", {}),
                     "reasonCodes": list(result.get("reason_codes", [])),
@@ -586,12 +891,18 @@ class LearningPlanModule:
             source = str(question.get("source", "")).strip()
             point_ids = [
                 str(item)
-                for item in (question.get("knowledge_point_ids") or [question.get("tag")])
+                for item in (
+                    question.get("knowledge_point_ids") or [question.get("tag")]
+                )
                 if item
             ]
             if not source or (tested_ids and not tested_ids.intersection(point_ids)):
                 continue
-            parts = [part.strip() for part in source.replace("\\", "/").split("/") if part.strip()]
+            parts = [
+                part.strip()
+                for part in source.replace("\\", "/").split("/")
+                if part.strip()
+            ]
             grouped.setdefault(
                 source,
                 {
