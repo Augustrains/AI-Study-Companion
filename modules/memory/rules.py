@@ -23,6 +23,12 @@ KNOWLEDGE_POINT_MEMORY_SCHEMA = {
     "updated_at": common_api.schema_validator.FieldSpec(str, required=True, nullable=False, min_length=1),
     "update_count": common_api.schema_validator.FieldSpec(int, required=True, nullable=False, min_value=1),
     "source": common_api.schema_validator.FieldSpec(str, required=True, nullable=False, min_length=1),
+    "assessed_mastery_level": common_api.schema_validator.FieldSpec((str, type(None)), required=True, nullable=True, choices=set(ALL_MASTERY_LEVELS)),
+    "user_calibrated_level": common_api.schema_validator.FieldSpec((str, type(None)), required=True, nullable=True, choices=set(ALL_MASTERY_LEVELS)),
+    "evidence_ids": common_api.schema_validator.FieldSpec(list, required=True, nullable=False, item_type=str),
+    "reason_codes": common_api.schema_validator.FieldSpec(list, required=True, nullable=False, item_type=str),
+    "algorithm_name": common_api.schema_validator.FieldSpec(str, required=True, nullable=False),
+    "algorithm_version": common_api.schema_validator.FieldSpec(str, required=True, nullable=False),
 }
 
 

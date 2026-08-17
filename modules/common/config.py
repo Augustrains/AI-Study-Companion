@@ -60,6 +60,31 @@ class Settings:
     storage_backup: bool = True
 
     @property
+    def database_url(self) -> str:
+        """业务数据库 URL；本地默认 SQLite，生产环境可直接使用 PostgreSQL。"""
+
+        default_path = (self.data_dir / "study_companion.sqlite3").resolve()
+        return os.getenv(
+            "STUDY_COMPANION_DATABASE_URL",
+            f"sqlite+pysqlite:///{default_path}",
+        )
+
+    @property
+    def checkpoint_backend(self) -> str:
+        backend = os.getenv("STUDY_COMPANION_CHECKPOINT_BACKEND", "sqlite").lower()
+        if backend not in {"sqlite", "postgres"}:
+            raise ConfigurationError(
+                "STUDY_COMPANION_CHECKPOINT_BACKEND must be sqlite or postgres",
+                details={"variable": "STUDY_COMPANION_CHECKPOINT_BACKEND"},
+            )
+        return backend
+
+    @property
+    def checkpoint_url(self) -> str:
+        default_path = (self.data_dir / "langgraph_checkpoints.sqlite3").resolve()
+        return os.getenv("STUDY_COMPANION_CHECKPOINT_URL", str(default_path))
+
+    @property
     def profile_path(self) -> Path:
         """返回学习者档案 JSON 文件的默认路径。"""
         return self.data_dir / "profiles" / "learner_profiles.json"

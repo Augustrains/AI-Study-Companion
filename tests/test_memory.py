@@ -33,24 +33,48 @@ class MemoryModuleTest(unittest.TestCase):
         finally:
             path.unlink(missing_ok=True)
 
-    def test_profile_sync_sets_mastery_and_confidence(self) -> None:
+    def test_profile_sync_keeps_self_report_separate_from_assessed_mastery(self) -> None:
         path = Path(__file__).parent / ".test-data" / "memory-profile.json"
         try:
             repository = self.build_repository(path)
             module = MemoryModule(repository)
+            repository.upsert(
+                LearnerMemory(
+                    user_id="u1",
+                    learning_domain="ml-001",
+                    knowledge_points=[
+                        KnowledgePointMemory(
+                            "kp-assessed",
+                            mastery_level="熟悉",
+                            mastery_score=0.7,
+                            confidence=0.8,
+                            assessed_mastery_level="熟悉",
+                            updated_at="now",
+                            update_count=1,
+                            source="diagnostic:diag-1",
+                        )
+                    ],
+                )
+            )
             profile = type("Profile", (), {
                 "user_id": "u1", "learning_domain": "machine_learning",
                 "known_knowledge_point_ids": ["kp-1"],
+                "unknown_knowledge_point_ids": ["kp-2"],
+                "self_assessed_level": "beginner",
                 "known_knowledge_point_note": "已掌握基础概念",
                 "current_confusions": "",
                 "preferences": type("Preferences", (), {"__dict__": {"difficulty": "adaptive"}})(),
             })()
             memory = module.sync_learner_profile(profile)
             point = memory.knowledge_points[0]
-            self.assertEqual(point.mastery_level, "掌握")
-            self.assertEqual(point.confidence, 1.0)
-            self.assertEqual(point.source, "learner_profile")
+            self.assertEqual(point.knowledge_point_id, "kp-assessed")
+            self.assertEqual(point.mastery_level, "熟悉")
+            self.assertEqual(point.confidence, 0.8)
+            self.assertEqual(point.source, "diagnostic:diag-1")
             self.assertEqual(point.update_count, 1)
+            self.assertEqual(memory.self_reported_known_knowledge_point_ids, ["kp-1"])
+            self.assertEqual(memory.self_reported_unknown_knowledge_point_ids, ["kp-2"])
+            self.assertEqual(memory.self_assessed_level, "beginner")
         finally:
             path.unlink(missing_ok=True)
 

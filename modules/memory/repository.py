@@ -2,11 +2,26 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from modules.common import api as common_api
 
 from .models import LearnerMemory
+
+
+class MemoryRepository(Protocol):
+    def get(self, user_id: str, learning_domain: str) -> LearnerMemory | None: ...
+
+    def upsert(self, memory: LearnerMemory) -> LearnerMemory: ...
+
+    def list_for_user(
+        self,
+        user_id: str,
+        learning_domain: str | None = None,
+    ) -> list[LearnerMemory]: ...
+
+    @staticmethod
+    def now() -> str: ...
 
 
 class JsonMemoryRepository:

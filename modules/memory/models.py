@@ -64,6 +64,12 @@ class KnowledgePointMemory:
     updated_at: str = ""                     #该知识点记忆最近一次更新时间
     update_count: int = 0                    #该知识点记忆累计更新次数
     source: str = ""                         #记忆来源
+    assessed_mastery_level: str | None = None  #规则算法给出的正式掌握阶段
+    user_calibrated_level: str | None = None   #用户确认/校准后的主观阶段
+    evidence_ids: list[str] = field(default_factory=list)
+    reason_codes: list[str] = field(default_factory=list)
+    algorithm_name: str = ""
+    algorithm_version: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return common_api.serialization.to_data(self)
@@ -80,6 +86,14 @@ class LearnerMemory:
     diagnosis_summary: dict[str, Any] = field(default_factory=dict)
     current_confusions: str = ""
     preferences: dict[str, Any] = field(default_factory=dict)
+    self_assessed_level: str = "unknown"
+    self_reported_known_knowledge_point_ids: list[str] = field(default_factory=list)
+    self_reported_unknown_knowledge_point_ids: list[str] = field(default_factory=list)
+    self_reported_knowledge_point_note: str = ""
+    last_completed_task_id: str = ""
+    last_activity_at: str = ""
+    completed_task_count: int = 0
+    state_version: int = 0
     updated_at: str = ""
     update_count: int = 0
 
