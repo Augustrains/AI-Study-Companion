@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 
 from modules.common.errors import ConflictError, ResourceNotFoundError
 from modules.persistence.database import Database
@@ -76,53 +77,68 @@ class SqlConversationRepository:
             return self._conversation(row) if row else None
 
     def append_message(self, message: ConversationMessage) -> ConversationMessage:
-        with self.database.session() as session:
-            conversation = session.get(ConversationRow, message.conversation_id)
-            if conversation is None:
-                raise ResourceNotFoundError(
-                    "conversation not found",
-                    details={"conversation_id": message.conversation_id},
+        try:
+            with self.database.session() as session:
+                if self.database.engine.dialect.name.startswith("sqlite"):
+                    session.execute(text("BEGIN IMMEDIATE"))
+                statement = select(ConversationRow).where(
+                    ConversationRow.conversation_id == message.conversation_id
                 )
-            if message.request_id:
-                existing = session.execute(
-                    select(ConversationMessageRow).where(
-                        ConversationMessageRow.conversation_id == message.conversation_id,
-                        ConversationMessageRow.request_id == message.request_id,
-                        ConversationMessageRow.role == message.role,
+                if not self.database.engine.dialect.name.startswith("sqlite"):
+                    statement = statement.with_for_update()
+                conversation = session.execute(statement).scalar_one_or_none()
+                if conversation is None:
+                    raise ResourceNotFoundError(
+                        "conversation not found",
+                        details={"conversation_id": message.conversation_id},
                     )
-                ).scalar_one_or_none()
-                if existing is not None:
-                    if existing.content != message.content:
-                        raise ConflictError(
-                            "message request id already exists with different content",
-                            details={"request_id": message.request_id},
+                if message.request_id:
+                    existing = session.execute(
+                        select(ConversationMessageRow).where(
+                            ConversationMessageRow.conversation_id
+                            == message.conversation_id,
+                            ConversationMessageRow.request_id == message.request_id,
+                            ConversationMessageRow.role == message.role,
                         )
-                    return self._message(existing)
+                    ).scalar_one_or_none()
+                    if existing is not None:
+                        if existing.content != message.content:
+                            raise ConflictError(
+                                "message request id already exists with different content",
+                                details={"request_id": message.request_id},
+                            )
+                        return self._message(existing)
 
-            last_sequence = session.execute(
-                select(ConversationMessageRow.sequence_no)
-                .where(
-                    ConversationMessageRow.conversation_id
-                    == message.conversation_id
+                last_sequence = session.execute(
+                    select(ConversationMessageRow.sequence_no)
+                    .where(
+                        ConversationMessageRow.conversation_id
+                        == message.conversation_id
+                    )
+                    .order_by(ConversationMessageRow.sequence_no.desc())
+                    .limit(1)
+                ).scalar_one_or_none()
+                message.sequence_no = (last_sequence or 0) + 1
+                session.add(
+                    ConversationMessageRow(
+                        message_id=message.message_id,
+                        conversation_id=message.conversation_id,
+                        sequence_no=message.sequence_no,
+                        role=message.role,
+                        content=message.content,
+                        request_id=message.request_id,
+                        token_count=message.token_count,
+                        created_at=message.created_at,
+                    )
                 )
-                .order_by(ConversationMessageRow.sequence_no.desc())
-                .limit(1)
-            ).scalar_one_or_none()
-            message.sequence_no = (last_sequence or 0) + 1
-            session.add(
-                ConversationMessageRow(
-                    message_id=message.message_id,
-                    conversation_id=message.conversation_id,
-                    sequence_no=message.sequence_no,
-                    role=message.role,
-                    content=message.content,
-                    request_id=message.request_id,
-                    token_count=message.token_count,
-                    created_at=message.created_at,
-                )
-            )
-            conversation.updated_at = message.created_at
-            conversation.version += 1
+                conversation.updated_at = message.created_at
+                conversation.version += 1
+        except IntegrityError as exc:
+            raise ConflictError(
+                "conversation message conflicted with a concurrent write",
+                details={"conversation_id": message.conversation_id},
+                cause=exc,
+            ) from exc
         return message
 
     def list_messages(

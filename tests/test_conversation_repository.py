@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -92,4 +93,24 @@ def test_summary_cannot_move_backwards(tmp_path: Path) -> None:
             ),
             actor_user_id="u1",
         )
+    database.close()
+
+
+def test_concurrent_messages_receive_unique_ordered_sequences(tmp_path: Path) -> None:
+    database, service = build_service(tmp_path / "concurrent.sqlite3")
+    conversation = service.create(user_id="u1", book_id="ml", mode="tutor")
+
+    def append(index: int) -> None:
+        service.append(
+            conversation.conversation_id,
+            actor_user_id="u1",
+            role="user",
+            content=f"并发消息 {index}",
+            request_id=f"concurrent-{index}",
+        )
+
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        list(executor.map(append, range(12)))
+    messages = service.messages(conversation.conversation_id, actor_user_id="u1")
+    assert [item.sequence_no for item in messages] == list(range(1, 13))
     database.close()
