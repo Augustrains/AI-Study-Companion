@@ -1,6 +1,7 @@
-export type NavKey = "today" | "diagnostic" | "plan" | "records" | "qa" | "profile";
+export type NavKey = "today" | "diagnostic" | "plan" | "records" | "qa" | "profile" | "goals" | "settings" | "resources" | "help";
 export type TaskStatus = "completed" | "in_progress" | "todo" | "review_due" | "skipped" | "rescheduled";
-export type BookId = "ml" | "dl";
+/** 书籍 ID 由后端目录接口（GET /books）提供，前端不再限定取值。 */
+export type BookId = string;
 
 export type Book = { id: BookId; title: string; shortTitle: string; subtitle: string };
 export type KnowledgeNode = { label: string; tone: "good" | "learning" | "weak" | "neutral"; left: string; top: string; description: string };
@@ -18,6 +19,15 @@ export type Source = {
   contentUnitId?: string;
   knowledgePointIds?: string[];
   bookId?: string;
+};
+
+/**
+ * 书籍 ID -> 后端 learning_domain。
+ * 后端 /books 接口就绪后应由接口直接返回该字段，这里只是过渡映射。
+ */
+export const bookLearningDomains: Record<string, string> = {
+  ml: "machine_learning",
+  dl: "deep_learning",
 };
 
 export const books: Book[] = [
@@ -131,5 +141,6 @@ const deepLearning: BookContent = {
   qaAnswer: "可以结合权重正则化、数据增强、早停、Dropout 和验证集监控，根据模型在验证集上的表现选择合适的复杂度。",
 };
 
-export const bookContents: Record<BookId, BookContent> = { ml: machineLearning, dl: deepLearning };
-export const getBookContent = (bookId: BookId) => bookContents[bookId];
+export const bookContents: Record<string, BookContent> = { ml: machineLearning, dl: deepLearning };
+/** 目录中新增的书籍尚无本地演示内容时，回退到默认内容，避免页面崩溃。 */
+export const getBookContent = (bookId: BookId): BookContent => bookContents[bookId] ?? machineLearning;

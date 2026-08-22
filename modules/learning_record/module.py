@@ -159,10 +159,19 @@ class LearningRecordModule:
         plan_id: str = "",
         book_id: str = "",
         knowledge_point_ids: list[str] | None = None,
+        duration_seconds: int = 0,
+        planned_minutes: int = 0,
         detail: dict[str, Any] | None = None,
         client_request_id: str = "",
     ) -> LearningActivity:
-        """将学习任务事件转换为可查询的学习记录并持久化。"""
+        """
+        将学习任务事件转换为可查询的学习记录并持久化。
+
+        duration_seconds 由用户在完成弹窗里自填（计划分钟数作为默认值），
+        写入 result 后被 today_learning._weekly_progress 统计为「本周学习时长」。
+        planned_minutes 一并保存，用于后续对比计划与实际、校准排课。
+        注意：普通学习任务不产生正确率，correct_count/total_count 只由能力诊断写入。
+        """
         if event_type != "task_completed":
             raise common_api.errors.ValidationAppError(
                 "unsupported learning event type",
@@ -211,7 +220,13 @@ class LearningRecordModule:
             plan_id=plan_id,
             task_id=task_id,
             knowledge_point_ids=knowledge_point_ids or [],
-            result={"task_status": status, "task_status_label": display_status},
+            result={
+                "task_status": status,
+                "task_status_label": display_status,
+                # 「本周进度」统计读取的字段
+                "duration_seconds": max(int(duration_seconds), 0),
+                "planned_minutes": max(int(planned_minutes), 0),
+            },
             detail={"task_title": display_task, **(detail or {})},
             client_request_id=client_request_id,
             source="web",

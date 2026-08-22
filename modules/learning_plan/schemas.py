@@ -20,6 +20,9 @@ class GenerateLearningPlanRequest(BaseModel):
     diagnostic_id: str = Field(alias="diagnosticId", min_length=1)
     book_id: str = Field(alias="bookId", min_length=1)
     goal: str = Field(min_length=1, max_length=200)
+    # 计划实际归属以诊断记录里的 user_id 为准，这里的 userId 只用于校验
+    # 「请求方就是做这次诊断的人」，防止拿别人的 diagnosticId 生成计划。
+    user_id: str = Field(alias="userId", min_length=1)
 
 
 class MaterialLearningPlanRequest(BaseModel):
@@ -34,6 +37,7 @@ class MaterialLearningPlanRequest(BaseModel):
     minutes: int = Field(default=20, ge=5, le=240)
     expected_completion_date: str = Field(default="", alias="expectedCompletionDate")
     resources: list["LearningPlanSourceResponse"] = Field(default_factory=list)
+    user_id: str = Field(alias="userId", min_length=1)
 
 
 class LearningPlanBookResponse(BaseModel):

@@ -35,6 +35,7 @@ def build_router(workflow: MaterialQaWorkflow) -> APIRouter:
             "recommended_action": answer.recommended_action,
             "conversation_id": answer.conversation_id,
             "request_id": request_id,
+            "answered_by_general_model": answer.answered_by_general_model,
         }
 
     @router.post("/api/rag/conversations", response_model=CreateMaterialQaConversationResponse)
@@ -48,6 +49,7 @@ def build_router(workflow: MaterialQaWorkflow) -> APIRouter:
             book_id=payload.book_id,
             question=payload.question,
             source_ids=payload.source_ids,
+            allow_general_fallback=payload.allow_general_fallback,
         )
         return answer_response(result, f"req-{conversation_id}")
 
@@ -61,6 +63,7 @@ def build_router(workflow: MaterialQaWorkflow) -> APIRouter:
             book_id=payload.book_id,
             question=payload.question,
             source_ids=payload.source_ids,
+            allow_general_fallback=payload.allow_general_fallback,
         )
         return answer_response(result, f"req-{conversation_id}")
 

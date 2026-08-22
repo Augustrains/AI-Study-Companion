@@ -53,6 +53,7 @@ class MaterialQaWorkflow:
         book_id: str,
         question: str,
         source_ids: list[str] | None = None,
+        allow_general_fallback: bool = False,
     ) -> MaterialQaAnswer:
         conversation, history = self.qa_service.begin_question(
             conversation_id=conversation_id,
@@ -70,6 +71,7 @@ class MaterialQaWorkflow:
                 history=history,
                 question=question,
                 retrieval=retrieval,
+                allow_general_fallback=allow_general_fallback,
             )
         )
         return self.qa_service.complete_question(conversation=conversation, output=output)
