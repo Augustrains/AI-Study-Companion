@@ -82,6 +82,23 @@ def build_question_planning_prompt(agent_input: QuestionPlanningInput) -> str:
         }
         for point_id, count in _eligible_question_counts(agent_input).items()
     ]
+    # 复测上下文：让模型知道这是第几轮、已经考过多少题。
+    # 取题时本来就会把做过的题排到候选池末尾，但那是「事后过滤」；
+    # 把轮次告诉模型，它才能在**分配题量**这一层就往没考过的知识点倾斜。
+    # 已答题目 ID 只给数量不给全量列表——几十上百个 ID 塞进提示词既占上下文
+    # 又对「每个知识点出几道」这个决策没有帮助。
+    round_number = max(1, int(agent_input.diagnosis_round or 1))
+    answered_count = len(agent_input.answered_question_ids or [])
+    if round_number <= 1:
+        review_context = "这是该用户在本书上的第 1 次诊断，没有历史答题记录。"
+    else:
+        review_context = (
+            f"这是第 {round_number} 轮复测，该用户此前已作答 {answered_count} 道题。"
+            "同一知识点的题目会优先出没做过的，题池用尽才回收旧题；"
+            "因此请优先把题量分配给尚未充分验证、或已到期需要复习的知识点，"
+            "不要把题量集中在上一轮已经答对过的地方。"
+        )
+
     return f"""你是 Study Companion 的自适应选题 Agent。请决定每个知识点的题量和 taskMode。
 
 规则：
@@ -92,6 +109,7 @@ def build_question_planning_prompt(agent_input: QuestionPlanningInput) -> str:
 5. 只输出 JSON，不要输出解释。
 
 学习目标：{agent_input.learning_goal or '未指定'}
+复测情况：{review_context}
 候选知识点：{json.dumps(points, ensure_ascii=False)}
 
 输出格式：
@@ -135,9 +153,12 @@ def parse_question_plan(
         for item in raw_items
         if isinstance(item, dict)
     }
-    result = []
-    remaining = maximum_total
-    for point_id, available in _eligible_question_counts(agent_input).items():
+    eligible = _eligible_question_counts(agent_input)
+
+    # 每个知识点「想要」几道题、用什么模式（模型给了就用模型的，否则用规则默认）
+    wanted: dict[str, int] = {}
+    modes: dict[str, str] = {}
+    for point_id, available in eligible.items():
         raw = by_id.get(point_id, {})
         default = fallback[point_id]
         mode = str(raw.get("taskMode", ""))
@@ -147,10 +168,56 @@ def parse_question_plan(
             count = int(raw.get("questionCount", default.question_count))
         except (TypeError, ValueError):
             count = default.question_count
-        count = min(max(0, count), available, 4, remaining)
-        remaining -= count
-        result.append(KnowledgePointQuestionPlan(point_id, count, mode))
-    return result
+        wanted[point_id] = min(max(0, count), available, 4)
+        modes[point_id] = mode
+
+    granted = _allocate_question_budget(wanted, maximum_total, agent_input.diagnosis_round)
+    return [KnowledgePointQuestionPlan(point_id, granted.get(point_id, 0), modes[point_id]) for point_id in eligible]
+
+
+def _allocate_question_budget(wanted: dict[str, int], maximum_total: int, diagnosis_round: int = 1) -> dict[str, int]:
+    """把有限的题量按「轮转发牌」分配给各知识点，而不是先到先得。
+
+    原实现是顺序遍历、`remaining` 减到 0 为止：26 个知识点各想要 4 道、
+    总预算 8 道时，**按字母序排在最前面的两个知识点会吃掉全部 8 道**，
+    其余 24 个一道都没有。首次诊断因此只覆盖 2/26 个知识点，
+    测不出用户的整体水平——诊断的意义就在于广度。
+
+    现在改成一轮一轮发：每轮给还没发够的知识点各发 1 道，发到预算用完为止。
+    - 想要得多的（薄弱、未测评）会在更多轮里拿到题，自然分到更多；
+    - 想要得少的（已掌握）拿 1 道点到为止；
+    - 预算不够覆盖全部知识点时，至少能覆盖 maximum_total 个不同的知识点。
+
+    diagnosis_round 决定发牌的起始位置：第 2 轮复测从上一轮的下一个知识点开始，
+    这样连续几次诊断能轮换着覆盖不同的知识点，而不是每次都测同样那几个。
+    """
+
+    order = [point_id for point_id in wanted if wanted[point_id] > 0]
+    if not order or maximum_total <= 0:
+        return {point_id: 0 for point_id in wanted}
+
+    # 按「想要的题量」从多到少排序，同数量时保持原顺序，保证结果确定可复现。
+    order.sort(key=lambda point_id: -wanted[point_id])
+    # 轮换起点：第 N 轮从第 (N-1) 个知识点开始发，避免每轮都从同一个开始。
+    offset = max(0, int(diagnosis_round or 1) - 1) % len(order)
+    order = order[offset:] + order[:offset]
+
+    granted = {point_id: 0 for point_id in wanted}
+    remaining = maximum_total
+    while remaining > 0:
+        progressed = False
+        for point_id in order:
+            if remaining <= 0:
+                break
+            if granted[point_id] >= wanted[point_id]:
+                continue
+            granted[point_id] += 1
+            remaining -= 1
+            progressed = True
+        if not progressed:
+            # 所有知识点都发到了各自想要的上限，预算还有剩余，正常结束。
+            break
+    return granted
 
 
 class GeneratedQuestionBank:
@@ -191,7 +258,18 @@ class GeneratedQuestionBank:
         *,
         max_questions_per_knowledge_point: int = 4,
         question_plan: dict[str, dict[str, Any]],
+        exclude_question_ids: set[str] | None = None,
+        rotation_seed: str = "",
     ) -> tuple[list[Question], dict[str, str]]:
+        """
+        按知识点选题。
+
+        exclude_question_ids：该用户此前已作答过的题目 ID。
+            这些题会被降级到候选池末尾，只有在未做过的题不够用时才回收，
+            从而让复测拿到新题而不是每次重复同一批。
+        rotation_seed：确定性打乱种子（一般传 user_id + 轮次）。
+            同一 seed 结果可复现，便于排查；不同轮次自然换一批题。
+        """
         target = {"machine_learning": "ml-001", "deep_learning": "dl-001"}.get(book_id, book_id)
         taxonomy = json.loads(self.taxonomy_path.read_text(encoding="utf-8"))
         valid_points = {row["knowledge_point_id"] for row in taxonomy}
@@ -200,9 +278,10 @@ class GeneratedQuestionBank:
             if row.get("knowledge_point_id") in valid_points:
                 mapping_by_item[row.get("learning_item_id", "")].append(row["knowledge_point_id"])
         localizations = {row.get("learning_item_id", ""): row for row in self._read_csv(self.localization_path)}
-        counts: dict[str, int] = defaultdict(int)
-        questions: list[Question] = []
-        answers: dict[str, str] = {}
+        seen = set(exclude_question_ids or ())
+
+        # 第一步：收集每个知识点下的全部候选题，不再边遍历边截断。
+        candidates: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for line in self.items_path.read_text(encoding="utf-8").splitlines():
             item = json.loads(line)
             if item.get("item_type") != "quiz_question":
@@ -217,29 +296,52 @@ class GeneratedQuestionBank:
                 for point in mapping_by_item.get(item_id, [])
                 if point in question_plan and int(question_plan[point].get("question_count", 0)) > 0
             ]
-            if not points or any(
-                counts[point] >= (
-                    min(int(question_plan[point].get("question_count", 0)), max_questions_per_knowledge_point)
-                )
-                for point in points
-            ):
+            if not points:
                 continue
-            loc = localizations.get(item_id, {})
-            options = item.get("options", [])
-            parsed = [
-                {
-                    "id": str(option.get("key", "")),
-                    "text": loc.get(f"zh_option_{str(option.get('key', '')).lower()}")
-                    or str(option.get("text", "")),
-                }
-                for option in options
-            ]
-            planned_mode = str(question_plan[points[0]].get("task_mode", ""))
-            questions.append(Question(id=item_id, title=loc.get("zh_stem") or str(item.get("stem", "")), tag=points[0], book_id=target, knowledge_point_ids=points, task_mode=planned_mode or "diagnostic", options=parsed, source=str(item.get("source", {}).get("source_url", ""))))
-            answers[item_id] = next((str(option.get("key", "")) for option in options if option.get("is_correct")), "")
-            for point in points:
-                counts[point] += 1
+            candidates[points[0]].append({"item": item, "item_id": item_id, "points": points})
+
+        # 第二步：每个知识点内部先按「是否做过」分层，再在层内确定性打乱后取前 N 道。
+        counts: dict[str, int] = defaultdict(int)
+        questions: list[Question] = []
+        answers: dict[str, str] = {}
+        for point_id in sorted(candidates):
+            wanted = min(
+                int(question_plan[point_id].get("question_count", 0)),
+                max_questions_per_knowledge_point,
+            )
+            if wanted <= 0:
+                continue
+            pool = candidates[point_id]
+            unseen = [entry for entry in pool if entry["item_id"] not in seen]
+            reused = [entry for entry in pool if entry["item_id"] in seen]
+            self._shuffle_in_place(unseen, f"{rotation_seed}:{point_id}:unseen")
+            self._shuffle_in_place(reused, f"{rotation_seed}:{point_id}:reused")
+            # 未做过的优先；不够时才回收做过的
+            for entry in (unseen + reused)[:wanted]:
+                item, item_id, points = entry["item"], entry["item_id"], entry["points"]
+                loc = localizations.get(item_id, {})
+                options = item.get("options", [])
+                parsed = [
+                    {
+                        "id": str(option.get("key", "")),
+                        "text": loc.get(f"zh_option_{str(option.get('key', '')).lower()}")
+                        or str(option.get("text", "")),
+                    }
+                    for option in options
+                ]
+                planned_mode = str(question_plan[points[0]].get("task_mode", ""))
+                questions.append(Question(id=item_id, title=loc.get("zh_stem") or str(item.get("stem", "")), tag=points[0], book_id=target, knowledge_point_ids=points, task_mode=planned_mode or "diagnostic", options=parsed, source=str(item.get("source", {}).get("source_url", ""))))
+                answers[item_id] = next((str(option.get("key", "")) for option in options if option.get("is_correct")), "")
+                for point in points:
+                    counts[point] += 1
         return questions, answers
+
+    @staticmethod
+    def _shuffle_in_place(entries: list[dict[str, Any]], seed: str) -> None:
+        """按 seed 做确定性打乱：同一 seed 顺序可复现，不同轮次顺序不同。"""
+        import random
+
+        random.Random(seed).shuffle(entries)
 
     @staticmethod
     def _read_csv(path: Path) -> list[dict[str, str]]:

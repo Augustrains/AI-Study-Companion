@@ -2,9 +2,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from modules.common import api as common_api
+from modules.auth.module import AuthModule
 from modules.diagnosis.agent import DiagnosticAgent
 from modules.diagnosis.services import AssessmentService, DiagnosisResultStore, GeneratedQuestionBank
 from modules.diagnosis.workflow import DiagnosisWorkflow
+from modules.learner_goals.module import LearnerGoalModule
 from modules.learner_profile.workflow import JsonLearnerProfileRepository, LearnerProfileWorkflow
 from modules.learning_plan.module import LearningPlanModule
 from modules.learning_plan.agent import LearningPlanAgent
@@ -27,6 +29,10 @@ class ApiDependencies:
     material_qa: MaterialQaWorkflow
     learning_record: LearningRecordModule
     today_learning: TodayLearningModule
+    # 学习目标：只读写本地 JSON，没有需要预热或关闭的资源。
+    learner_goals: LearnerGoalModule
+    # 认证：同上，启动时会确保体验账号存在。
+    auth: AuthModule
 
     def start(self) -> None:
         """预热应用级资源，避免首个请求承担模型加载成本。"""
@@ -73,11 +79,14 @@ def build_api_dependencies(settings: common_api.config.Settings | None = None) -
         learning_record=learning_record_module,
         knowledge_point_catalog=knowledge_point_catalog,
     )
+    learner_goal_module = LearnerGoalModule()
     learning_plan_module = LearningPlanModule(
         result_repository,
         LearningPlanAgent(DeepSeekLLMClient.from_env()),
         memory=memory_module,
         learner_profile=profile_workflow,
+        learner_goals=learner_goal_module,
+        learning_record=learning_record_module,
     )
     today_learning_module = TodayLearningModule(learning_plan_module, learning_record_module, diagnosis_workflow)
     material_qa_retriever = QdrantMaterialRetriever(
@@ -101,6 +110,8 @@ def build_api_dependencies(settings: common_api.config.Settings | None = None) -
         ),
         learning_record=learning_record_module,
         today_learning=today_learning_module,
+        learner_goals=learner_goal_module,
+        auth=AuthModule(),
     )
 
 

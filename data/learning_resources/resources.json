@@ -1,0 +1,353 @@
+{
+  "_note": "知识点延伸学习资源。所有链接均已逐条访问核实（YouTube 经官方 oEmbed 校验标题与频道）。新增资源请同样先核实可访问再写入。",
+  "resources": {
+    "kp-ml-intro": [
+      {
+        "title": "[中英字幕]吴恩达机器学习系列课程",
+        "platform": "bilibili",
+        "url": "https://www.bilibili.com/video/BV164411b7dx/",
+        "language": "zh",
+        "kind": "course",
+        "note": "经典机器学习课中英字幕版，前几集覆盖机器学习定义与监督/无监督学习。"
+      },
+      {
+        "title": "A Gentle Introduction to Machine Learning",
+        "platform": "youtube",
+        "url": "https://www.youtube.com/watch?v=Gv9_4yMHFhI",
+        "language": "en",
+        "kind": "video",
+        "note": "StatQuest 图解机器学习基本术语与训练/测试概念，零基础友好。"
+      },
+      {
+        "title": "What is Machine Learning? · Google for Developers",
+        "platform": "other",
+        "url": "https://developers.google.com/machine-learning/intro-to-ml/what-is-ml",
+        "language": "en",
+        "kind": "article",
+        "note": "系统讲解机器学习定义，明确区分监督、无监督与强化学习。"
+      }
+    ],
+    "kp-ml-history": [
+      {
+        "title": "AI简史：从1950到2026",
+        "platform": "bilibili",
+        "url": "https://www.bilibili.com/video/BV1LmorBDEUF/",
+        "language": "zh",
+        "kind": "video",
+        "note": "15 分钟中文梳理 1950 年至今的 AI 发展脉络与关键人物。"
+      },
+      {
+        "title": "The history of Machine Learning · ML for Beginners",
+        "platform": "youtube",
+        "url": "https://www.youtube.com/watch?v=N6wxM4wZ7V0",
+        "language": "en",
+        "kind": "video",
+        "note": "微软官方课程的机器学习历史章节，与本项目教材同源。"
+      },
+      {
+        "title": "History of artificial intelligence",
+        "platform": "other",
+        "url": "https://en.wikipedia.org/wiki/History_of_artificial_intelligence",
+        "language": "en",
+        "kind": "article",
+        "note": "从达特茅斯会议、两次 AI 寒冬到深度学习复兴的完整时间线。"
+      }
+    ],
+    "kp-ml-fairness": [
+      {
+        "title": "Fairness: Types of bias · Google",
+        "platform": "other",
+        "url": "https://developers.google.com/machine-learning/crash-course/fairness/types-of-bias",
+        "language": "en",
+        "kind": "article",
+        "note": "逐条列举报告偏差、历史偏差、选择偏差等十类偏见及实例。"
+      },
+      {
+        "title": "Responsible AI: Fairness & Bias",
+        "platform": "coursera",
+        "url": "https://www.coursera.org/learn/responsible-ai-for-developers-fairness--bias",
+        "language": "en",
+        "kind": "course",
+        "note": "Google Cloud 课程，含识别与缓解模型偏见的动手实验。"
+      }
+    ],
+    "kp-ml-regression-intro": [
+      {
+        "title": "Linear Regression, Clearly Explained!!!",
+        "platform": "youtube",
+        "url": "https://www.youtube.com/watch?v=7ArmBVF2dCs",
+        "language": "en",
+        "kind": "video",
+        "note": "StatQuest 直观讲最小二乘、R² 与 p 值，建立回归统计直觉。"
+      },
+      {
+        "title": "Linear Regression · Google",
+        "platform": "other",
+        "url": "https://developers.google.com/machine-learning/crash-course/linear-regression",
+        "language": "en",
+        "kind": "article",
+        "note": "从预测油耗切入，讲清回归目标、损失函数与梯度下降。"
+      },
+      {
+        "title": "吴恩达：监督学习 回归与分类",
+        "platform": "coursera",
+        "url": "https://www.coursera.org/learn/machine-learning",
+        "language": "en",
+        "kind": "course",
+        "note": "专项课第一门，系统讲解回归模型、代价函数与梯度下降。"
+      }
+    ],
+    "kp-ml-linear-polynomial-regression": [
+      {
+        "title": "【官方中英】吴恩达机器学习课程",
+        "platform": "bilibili",
+        "url": "https://www.bilibili.com/video/BV1owrpYKEtP/",
+        "language": "zh",
+        "kind": "course",
+        "note": "吴恩达官方账号 146 集，含线性回归、梯度下降与多项式特征中文字幕讲解。"
+      },
+      {
+        "title": "Linear Regression, Clearly Explained!!!",
+        "platform": "youtube",
+        "url": "https://www.youtube.com/watch?v=7ArmBVF2dCs",
+        "language": "en",
+        "kind": "video",
+        "note": "先把线性回归的拟合与评估讲透，是理解多项式回归的必要基础。"
+      },
+      {
+        "title": "吴恩达：监督学习 回归与分类",
+        "platform": "coursera",
+        "url": "https://www.coursera.org/learn/machine-learning",
+        "language": "en",
+        "kind": "course",
+        "note": "第二模块明确覆盖特征工程与多项式回归。"
+      }
+    ],
+    "kp-ml-logistic-regression": [
+      {
+        "title": "StatQuest: Logistic Regression",
+        "platform": "youtube",
+        "url": "https://www.youtube.com/watch?v=yIYKR4sgzI8",
+        "language": "en",
+        "kind": "video",
+        "note": "讲清与线性回归的区别、sigmoid 与最大似然估计，该主题最经典入门。"
+      },
+      {
+        "title": "Logistic Regression · Google",
+        "platform": "other",
+        "url": "https://developers.google.com/machine-learning/crash-course/logistic-regression",
+        "language": "en",
+        "kind": "article",
+        "note": "35 分钟模块，覆盖 sigmoid 概率输出、对数损失与正则化。"
+      },
+      {
+        "title": "【官方中英】吴恩达机器学习课程",
+        "platform": "bilibili",
+        "url": "https://www.bilibili.com/video/BV1owrpYKEtP/",
+        "language": "zh",
+        "kind": "course",
+        "note": "逻辑回归与决策边界部分讲解细致，配套代码可练。"
+      }
+    ],
+    "kp-ml-classification-intro": [
+      {
+        "title": "Classification · Google",
+        "platform": "other",
+        "url": "https://developers.google.com/machine-learning/crash-course/classification",
+        "language": "en",
+        "kind": "article",
+        "note": "讲解分类阈值、准确率/精确率/召回率、ROC 与 AUC。"
+      },
+      {
+        "title": "吴恩达：监督学习 回归与分类",
+        "platform": "coursera",
+        "url": "https://www.coursera.org/learn/machine-learning",
+        "language": "en",
+        "kind": "course",
+        "note": "第三模块专讲分类：决策边界、过拟合与正则化，有编程作业。"
+      }
+    ],
+    "kp-ml-classifiers-1": [
+      {
+        "title": "StatQuest: Logistic Regression",
+        "platform": "youtube",
+        "url": "https://www.youtube.com/watch?v=yIYKR4sgzI8",
+        "language": "en",
+        "kind": "video",
+        "note": "先建立概率型分类器的直觉。"
+      },
+      {
+        "title": "Support Vector Machines Part 1",
+        "platform": "youtube",
+        "url": "https://www.youtube.com/watch?v=efR1C6CvhmE",
+        "language": "en",
+        "kind": "video",
+        "note": "讲最大间隔与支持向量的核心思想，后两集讲核函数。"
+      },
+      {
+        "title": "Naive Bayes, Clearly Explained!!!",
+        "platform": "youtube",
+        "url": "https://www.youtube.com/watch?v=O2L2Uv9pdDA",
+        "language": "en",
+        "kind": "video",
+        "note": "用垃圾邮件分类讲朴素贝叶斯的条件独立假设与平滑。"
+      }
+    ],
+    "kp-ml-clustering-intro": [
+      {
+        "title": "What is clustering? · Google",
+        "platform": "other",
+        "url": "https://developers.google.com/machine-learning/clustering/overview",
+        "language": "en",
+        "kind": "article",
+        "note": "说明聚类作为无监督方法的定义、相似度度量与应用场景。"
+      },
+      {
+        "title": "StatQuest: Hierarchical Clustering",
+        "platform": "youtube",
+        "url": "https://www.youtube.com/watch?v=7xHsRkOdVwo",
+        "language": "en",
+        "kind": "video",
+        "note": "通过层次聚类与树状图理解「相似度」和聚类结构。"
+      },
+      {
+        "title": "吴恩达：无监督学习与强化学习",
+        "platform": "coursera",
+        "url": "https://www.coursera.org/learn/unsupervised-learning-recommenders-reinforcement-learning",
+        "language": "en",
+        "kind": "course",
+        "note": "第一模块系统讲聚类与异常检测，配 Python 实验。"
+      }
+    ],
+    "kp-ml-kmeans": [
+      {
+        "title": "StatQuest: K-means clustering",
+        "platform": "youtube",
+        "url": "https://www.youtube.com/watch?v=4b5d3muPQmA",
+        "language": "en",
+        "kind": "video",
+        "note": "分步动画演示初始化、分配与更新迭代，并讲肘部法选 K。"
+      },
+      {
+        "title": "动手学机器学习 · 第14章 k均值聚类",
+        "platform": "other",
+        "url": "https://hml.boyuai.com/books/chapter14",
+        "language": "zh",
+        "kind": "article",
+        "note": "上海交大中文教材章节，含原理、NumPy 实现与 k-means++ 改进。"
+      },
+      {
+        "title": "吴恩达：无监督学习与强化学习",
+        "platform": "coursera",
+        "url": "https://www.coursera.org/learn/unsupervised-learning-recommenders-reinforcement-learning",
+        "language": "en",
+        "kind": "course",
+        "note": "含 K-means intuition / algorithm 专门小节及优化目标推导。"
+      }
+    ],
+    "kp-ml-nlp-intro": [
+      {
+        "title": "《自然语言处理入门》",
+        "platform": "bilibili",
+        "url": "https://www.bilibili.com/video/BV1wE411y7kF/",
+        "language": "zh",
+        "kind": "course",
+        "note": "HanLP 作者课程，覆盖中文分词、词性标注、命名实体识别与文本分类。"
+      },
+      {
+        "title": "李宏毅机器学习课程",
+        "platform": "bilibili",
+        "url": "https://www.bilibili.com/video/BV1Wv411h7kN/",
+        "language": "zh",
+        "kind": "course",
+        "note": "自监督学习与 BERT/Transformer 章节，现代 NLP 最佳中文讲解之一。"
+      },
+      {
+        "title": "NLP with Classification and Vector Spaces",
+        "platform": "coursera",
+        "url": "https://www.coursera.org/learn/classification-vector-spaces-in-nlp",
+        "language": "en",
+        "kind": "course",
+        "note": "DeepLearning.AI NLP 专项课第一门，用情感分析带入 NLP 基本任务。"
+      }
+    ],
+    "kp-ml-timeseries-intro": [
+      {
+        "title": "Time Series Analysis 播放列表",
+        "platform": "youtube",
+        "url": "https://www.youtube.com/playlist?list=PLvcbYUQ5t0UHOLnBzl46_Q6QKtFgfMGc3",
+        "language": "en",
+        "kind": "video",
+        "note": "ritvikmath 系列，从平稳性讲到 AR/MA/ARIMA，有配套代码。"
+      },
+      {
+        "title": "What Are Time Series?",
+        "platform": "youtube",
+        "url": "https://www.youtube.com/watch?v=i7HARZlJv7Y",
+        "language": "en",
+        "kind": "video",
+        "note": "简短介绍时间序列定义、趋势与季节性成分。"
+      },
+      {
+        "title": "Forecasting: Principles and Practice 第 1 章",
+        "platform": "other",
+        "url": "https://otexts.com/fpp3/intro.html",
+        "language": "en",
+        "kind": "article",
+        "note": "Hyndman 免费在线经典教材，讲清预测能做什么与预测流程。"
+      }
+    ],
+    "kp-ml-timeseries-arima": [
+      {
+        "title": "机器学习经典算法：时间序列ARIMA模型",
+        "platform": "bilibili",
+        "url": "https://www.bilibili.com/video/BV1F441187xt/",
+        "language": "zh",
+        "kind": "video",
+        "note": "中文五集小课，讲平稳性、差分、ACF/PACF 定阶与建模流程。"
+      },
+      {
+        "title": "Time Series Talk : ARIMA Model",
+        "platform": "youtube",
+        "url": "https://www.youtube.com/watch?v=3UmyHed0iYE",
+        "language": "en",
+        "kind": "video",
+        "note": "把 ARIMA 拆成 AR、I、MA 三部分逐一解释 p/d/q 参数含义。"
+      },
+      {
+        "title": "Forecasting: Principles and Practice 第 9 章",
+        "platform": "other",
+        "url": "https://otexts.com/fpp3/arima.html",
+        "language": "en",
+        "kind": "article",
+        "note": "从平稳性与差分讲到季节性 ARIMA 与模型选择。"
+      }
+    ],
+    "kp-ml-reinforcement-qlearning": [
+      {
+        "title": "【莫烦Python】强化学习",
+        "platform": "bilibili",
+        "url": "https://www.bilibili.com/video/BV13W411Y75P/",
+        "language": "zh",
+        "kind": "course",
+        "note": "31 集中文课，含 Q Learning 算法更新与思维决策，边讲边写代码。"
+      },
+      {
+        "title": "【王树森】深度强化学习(DRL)",
+        "platform": "bilibili",
+        "url": "https://www.bilibili.com/video/BV12o4y197US/",
+        "language": "zh",
+        "kind": "course",
+        "note": "23 集系统课，含 Q-Learning 与 DQN、Double DQN，公式推导清楚。"
+      },
+      {
+        "title": "Q-Learning Explained",
+        "platform": "youtube",
+        "url": "https://www.youtube.com/watch?v=qhRNvCVVJaA",
+        "language": "en",
+        "kind": "video",
+        "note": "deeplizard 讲 Q 表、贝尔曼方程与探索-利用权衡。"
+      }
+    ]
+  }
+}

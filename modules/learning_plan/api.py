@@ -17,9 +17,10 @@ def build_router(module: LearningPlanModule) -> APIRouter:
     @router.get("/api/learning-plans", response_model=LearningPlanLookupResponse)
     def get_learning_plan(
         book_id: str = Query(..., alias="bookId", min_length=1),
+        user_id: str = Query(..., alias="userId", min_length=1),
         diagnostic_id: str | None = Query(default=None, alias="diagnosticId"),
     ) -> dict[str, Any]:
-        plan = module.get_saved(book_id=book_id, diagnostic_id=diagnostic_id)
+        plan = module.get_saved(book_id=book_id, diagnostic_id=diagnostic_id, user_id=user_id)
         return {"exists": plan is not None, "plan": plan}
 
     @router.post("/api/learning-plans/generate", response_model=GenerateLearningPlanResponse)
@@ -29,6 +30,7 @@ def build_router(module: LearningPlanModule) -> APIRouter:
             diagnostic_id=payload.diagnostic_id,
             book_id=payload.book_id,
             goal=payload.goal,
+            user_id=payload.user_id,
         )
 
     @router.post("/api/learning-plans/material", response_model=GenerateLearningPlanResponse)
@@ -42,6 +44,7 @@ def build_router(module: LearningPlanModule) -> APIRouter:
             minutes=payload.minutes,
             expected_completion_date=payload.expected_completion_date,
             resources=[resource.model_dump() for resource in payload.resources],
+            user_id=payload.user_id,
         )
 
     return router

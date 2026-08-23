@@ -36,14 +36,29 @@ def build_router(module: LearningRecordModule, learning_plan: Any | None = None)
             plan_id=(str(plan_result.get("planId", "")) if plan_result else payload.plan_id),
             book_id=(str(plan_result.get("bookId", "")) if plan_result else payload.book_id),
             knowledge_point_ids=recorded_knowledge_point_ids,
+            duration_seconds=payload.duration_seconds,
+            planned_minutes=payload.planned_minutes,
             detail={**payload.detail, "plan_completed": plan_result.get("planCompleted", False), "memory_updated": plan_result.get("memoryUpdated", False)},
             client_request_id=payload.client_request_id,
         )
+        # 这条完成记录带来了新的「计划 vs 实际」样本，据此重排剩下没做的任务日期。
+        # 只改日期、不动任务内容、不碰已完成的任务，所以可以自动做；
+        # 失败也只是排期没更新，不能让「任务已完成」这件事写不进去。
+        rescheduled = False
+        if learning_plan is not None and payload.event_type == "task_completed":
+            book = str(plan_result.get("bookId", "")) or payload.book_id.strip()
+            if book:
+                try:
+                    rescheduled = learning_plan.reschedule(user_id=payload.user_id.strip(), book_id=book) is not None
+                except Exception:  # noqa: BLE001
+                    rescheduled = False
+
         return LearningEventResponse(
             eventId=activity.id,
             activity=common_activity_to_response(activity),
             planCompleted=bool(plan_result.get("planCompleted", False)),
             memoryUpdated=bool(plan_result.get("memoryUpdated", False)),
+            planRescheduled=rescheduled,
         )
 
     @router.get("/api/learning-records", response_model=LearningActivityListResponse)

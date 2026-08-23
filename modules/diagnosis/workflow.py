@@ -51,11 +51,17 @@ def build_diagnosis_graph(
             item["id"]: item
             for item in (knowledge_point_catalog.as_dicts(domain) if knowledge_point_catalog else [])
         }
+        # answered_question_ids / diagnosis_round 是必填字段，之前这里漏传，
+        # 导致 load_questions 直接抛 TypeError、整个诊断起不来。
+        # 它们同时也是选题上下文：让模型知道这是第几轮复测、哪些题已经做过，
+        # 而不只是在取题时把旧题过滤掉。
         plan = diagnostic_agent.plan_questions(
             QuestionPlanningInput(
                 learning_goal=state.get("learning_goal", ""),
                 knowledge_point_mastery=state.get("knowledge_point_mastery", {}),
                 knowledge_point_memory=state.get("knowledge_point_memory", {}),
+                answered_question_ids=list(state.get("answered_question_ids", []) or []),
+                diagnosis_round=int(state.get("diagnosis_round", 1) or 1),
                 available_question_counts=question_bank.get_question_inventory(state["book_id"]),
                 knowledge_point_catalog=catalog,
             )
@@ -71,6 +77,9 @@ def build_diagnosis_graph(
         questions, correct_answers = question_bank.get_questions(
             state["book_id"],
             question_plan=plan_by_point,
+            # 复测时优先出没做过的题；题池用完才回收
+            exclude_question_ids=set(state.get("answered_question_ids", []) or []),
+            rotation_seed=f"{state.get('user_id', '')}:{state.get('book_id', '')}:{state.get('diagnosis_round', 1)}",
         )
         return {
             "questions": [DiagnosisService.question_payload(question) for question in questions],
@@ -222,8 +231,32 @@ class DiagnosisWorkflow:
         )
         return {"diagnostic_id": diagnosis_id, "questions": self._state(diagnosis_id)["questions"]}
 
+    def _answered_question_history(self, user_id: str, book_id: str) -> tuple[list[str], int]:
+        """
+        从学习记录里读出该用户在这本书上做过的题目 ID 和已完成的诊断轮次。
+        用于复测选题时排除旧题；学习记录不可用时退化为空集（照旧出题，不报错）。
+        """
+        if not self.learning_record:
+            return [], 1
+        try:
+            page = self.learning_record.list_activities(user_id, category="diagnostic", page=1, page_size=100)
+        except Exception:
+            return [], 1
+        answered: list[str] = []
+        rounds = 0
+        for activity in page.get("records", []):
+            if activity.book_id not in {book_id, {"ml": "ml-001", "dl": "dl-001"}.get(book_id, book_id)}:
+                continue
+            rounds += 1
+            for record in activity.detail.get("answer_records", []) or []:
+                question_id = str(record.get("question_id", "")) if isinstance(record, dict) else ""
+                if question_id:
+                    answered.append(question_id)
+        return answered, rounds + 1
+
     def start(self, *, diagnosis_id: str, user_id: str, book_id: str, learning_goal: str) -> dict[str, Any]:
         learner_memory = self.memory.get_learner_memory(user_id, book_id) if self.memory else None
+        answered_question_ids, diagnosis_round = self._answered_question_history(user_id, book_id)
         mastery = (
             {item.knowledge_point_id: item.mastery_level for item in learner_memory.knowledge_points}
             if learner_memory
@@ -252,6 +285,8 @@ class DiagnosisWorkflow:
                 "learning_goal": learning_goal,
                 "knowledge_point_mastery": mastery,
                 "knowledge_point_memory": memory_by_point,
+                "answered_question_ids": answered_question_ids,
+                "diagnosis_round": diagnosis_round,
                 "status": "started",
             },
             config=self._config(diagnosis_id),

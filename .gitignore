@@ -40,3 +40,13 @@ data/02-内容与数据/原始资料/
 .idea/
 .DS_Store
 Thumbs.db
+
+# 上游教材仓库：很大且可从 GitHub 重新克隆
+data/question_new/教材/
+
+# 运行时产物
+data/qdrant-bge-m3/
+data/_demo_backup/
+
+# 账号凭据，永远不进版本库
+data/auth/

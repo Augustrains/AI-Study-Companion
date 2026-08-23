@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -19,6 +20,8 @@ from .models import LEARNING_TASK_TYPES_BY_SOURCE, LearningTask
 
 if False:  # pragma: no cover
     from modules.learner_profile.workflow import LearnerProfileWorkflow
+    from modules.learner_goals.module import LearnerGoalModule
+    from modules.learning_record.module import LearningRecordModule
     from modules.memory.module import MemoryModule
 
 
@@ -43,8 +46,14 @@ class LearningPlanModule:
 
     DEFAULT_PATH = Path(__file__).resolve().parents[2] / "data" / "learning_plan" / "plans.json"
 
-    def __init__(self, results: DiagnosisResultStore, agent: LearningPlanAgent | None = None, path: str | Path | None = None, memory: "MemoryModule | None" = None, learner_profile: "LearnerProfileWorkflow | None" = None) -> None:
-        """保存诊断会话存储，并允许注入自定义计划生成代理。"""
+    def __init__(self, results: DiagnosisResultStore, agent: LearningPlanAgent | None = None, path: str | Path | None = None, memory: "MemoryModule | None" = None, learner_profile: "LearnerProfileWorkflow | None" = None, learner_goals: "LearnerGoalModule | None" = None, learning_record: "LearningRecordModule | None" = None) -> None:
+        """保存诊断会话存储，并允许注入自定义计划生成代理。
+
+        learner_goals 提供用户设定的每周投入时长，用于把任务按天摊开；
+        没注入或用户没设过目标时，排课退回原来的行为（不做时间约束）。
+        learning_record 提供历史「计划用时 vs 实际用时」，用于校准排课节奏；
+        没注入或样本不足时校准倍数为 1.0（等于不校准）。
+        """
         self.results = results
         self.agent = agent or LearningPlanAgent()
         target = path or self.DEFAULT_PATH
@@ -52,14 +61,25 @@ class LearningPlanModule:
         self.store = common_api.json_storage.JsonStore()
         self.memory = memory
         self.learner_profile = learner_profile
+        self.learner_goals = learner_goals
+        self.learning_record = learning_record
 
-    def get_saved(self, *, book_id: str, diagnostic_id: str | None = None) -> dict[str, Any] | None:
+    def get_saved(self, *, book_id: str, diagnostic_id: str | None = None, user_id: str = "") -> dict[str, Any] | None:
+        """读取某本书的在途计划。
+
+        user_id 非空时按用户过滤：计划文件是全用户共用一个 plans.json，
+        不过滤的话 A 用户会读到 B 用户的计划。
+        没有 userId 字段的历史计划一律不匹配——宁可让用户重新生成一份，
+        也不猜它属于谁。
+        """
         payload = self.reader.read(allow_missing=True, allow_empty=False)
         if payload == {}:
             return None
         if not isinstance(payload, dict):
             raise common_api.errors.StorageReadError("learning plan resource must be a JSON object")
         candidates = [item for item in payload.values() if isinstance(item, dict) and item.get("bookId") == book_id and item.get("status") != "completed"]
+        if user_id:
+            candidates = [item for item in candidates if item.get("userId") == user_id]
         if diagnostic_id:
             candidates = [item for item in candidates if item.get("diagnosticId") == diagnostic_id]
         if not candidates:
@@ -100,13 +120,14 @@ class LearningPlanModule:
         resources: list[dict[str, Any]] | None = None,
         plan_key: str | None = None,
         diagnostic_id: str = "",
+        user_id: str = "",
     ) -> dict[str, Any]:
         """Create/extend a plan and persist it through the shared plan store.
 
         Both diagnostic-generated tasks and material-QA tasks use this entry
         point so task shape and local persistence stay consistent.
         """
-        existing = self.get_saved(book_id=book_id, diagnostic_id=diagnostic_id or None)
+        existing = self.get_saved(book_id=book_id, diagnostic_id=diagnostic_id or None, user_id=user_id)
         if existing is None:
             plan = {
                 "book": self._book(book_id),
@@ -127,6 +148,7 @@ class LearningPlanModule:
             diagnostic_id=diagnostic_id,
             plan=plan,
             plan_key=key,
+            user_id=user_id,
         )
         return plan
 
@@ -137,11 +159,12 @@ class LearningPlanModule:
         diagnostic_id: str,
         plan: dict[str, Any],
         plan_key: str,
+        user_id: str = "",
     ) -> dict[str, Any]:
         """Persist any plan shape through the single local storage gateway."""
         self.store.save(
             path=self.reader.path,
-            content={"bookId": book_id, "diagnosticId": diagnostic_id, "plan": plan},
+            content={"bookId": book_id, "diagnosticId": diagnostic_id, "userId": user_id, "plan": plan},
             mode="upsert",
             key_path=[plan_key],
         )
@@ -215,9 +238,16 @@ class LearningPlanModule:
             "alreadyCompleted": was_completed,
         }
 
-    def generate(self, *, diagnostic_id: str, book_id: str, goal: str) -> dict[str, Any]:
+    def generate(self, *, diagnostic_id: str, book_id: str, goal: str, user_id: str = "") -> dict[str, Any]:
         """校验输入后，生成任务、学习建议及相关资源。"""
         diagnosis = self.results.get(diagnostic_id)
+        # 只允许为自己的诊断生成计划。user_id 为空表示调用方没传（旧客户端），
+        # 保持原行为不阻断；传了就必须对得上。
+        if user_id and diagnosis.user_id != user_id:
+            raise ValidationAppError(
+                "diagnostic session belongs to another user",
+                details={"diagnostic_id": diagnostic_id},
+            )
         # 兼容前端教材编号和后端题库编号，防止跨教材生成计划。
         expected_book_id = BOOK_TO_QUESTION_BANK.get(book_id, book_id)
         if diagnosis.book_id != expected_book_id:
@@ -249,13 +279,14 @@ class LearningPlanModule:
         planning_units = self._build_planning_units(questions, answer_records, results)
         #按照能力掌握排序
         ordered_results = sorted(planning_units, key=self._status_rank)
-        fallback_tasks = [
-            self._build_task(diagnostic_id, item, index, goal)
-            for index, item in enumerate(ordered_results)
-        ]
         question_evidence = self._build_question_evidence(questions, answer_records)
         learner_preferences = self._learner_preferences(diagnosis.user_id, diagnosis.book_id)
         session_budget = learner_preferences.get("sessionTimeBudgetMinutes")
+        fallback_tasks = [
+            self._build_task(diagnostic_id, item, index, goal, session_budget)
+            for index, item in enumerate(ordered_results)
+        ]
+        daily_budget = self._daily_minutes_budget(diagnosis.user_id, book_id)
         agent_input = LearningPlanAgentInput(
             book=self._book(book_id),
             goal=goal,
@@ -275,17 +306,252 @@ class LearningPlanModule:
                 "minTaskCount": len(ordered_results),
                 "maxTaskCount": len(ordered_results),
                 "minTaskMinutes": 5,
-                "maxTaskMinutes": max(5, min(60, int(session_budget))) if session_budget else 60,
+                "maxTaskMinutes": self._max_task_minutes(session_budget),
+                # 用户在「选书与目标」里设定的每周时长折算成的每日分钟预算；
+                # None 表示没设过目标，模型不必考虑时间约束。
+                "dailyMinutesBudget": daily_budget,
             },
         )
         plan = self.agent.build(agent_input, fallback_tasks=fallback_tasks)
+        plan = self._apply_time_budget(
+            plan,
+            daily_budget=daily_budget,
+            pace_factor=self.pace_factor(diagnosis.user_id, book_id),
+        )
         self.persist_plan(
             book_id=book_id,
             diagnostic_id=diagnostic_id,
             plan=plan,
             plan_key=f"{book_id}:{diagnostic_id}",
+            # 计划归属跟随诊断，而不是请求参数——诊断是谁做的，计划就是谁的。
+            user_id=diagnosis.user_id,
         )
         return plan
+
+    # ---------- 实际速度校准 ----------
+
+    # 至少要有这么多条完成记录才敢用实际速度校准，样本太少就是噪声。
+    PACE_MIN_SAMPLES = 3
+    # 只看最近这些条，速度会随熟练度变化，太老的记录不代表现在。
+    PACE_WINDOW = 10
+    # 校准倍数的上下限。一次误填的 24 小时不该把后面的排课全毁掉。
+    PACE_MIN, PACE_MAX = 0.5, 3.0
+    # 在这个区间内视为「估得挺准」，不做校准也不提示。
+    PACE_NEUTRAL = (0.9, 1.1)
+
+    def pace_factor(self, user_id: str, book_id: str) -> float:
+        """用户实际用时相对于计划用时的倍数。1.0 表示估得准，2.0 表示总要花两倍时间。
+
+        取最近若干条完成记录里「实际 / 计划」的**中位数**，而不是总和之比：
+        总和之比会被一两个特别长的任务主导，中位数对误填和偶发的通宵更稳。
+        样本不足、没有学习记录模块、或者算不出来时一律返回 1.0（不校准）。
+        """
+
+        if self.learning_record is None:
+            return 1.0
+        try:
+            page = self.learning_record.list_activities(
+                user_id,
+                category="task",
+                activity_type="task_completed",
+                page=1,
+                page_size=50,
+            )
+        except Exception:  # noqa: BLE001 - 读不到记录就是不校准，不该影响生成计划
+            return 1.0
+
+        expected = {book_id, BOOK_TO_QUESTION_BANK.get(book_id, book_id)}
+        ratios: list[float] = []
+        for activity in page.get("records", []):
+            if getattr(activity, "book_id", "") and activity.book_id not in expected:
+                continue
+            result = getattr(activity, "result", {}) or {}
+            planned = int(result.get("planned_minutes", 0) or 0)
+            actual_seconds = int(result.get("duration_seconds", 0) or 0)
+            if planned <= 0 or actual_seconds <= 0:
+                # 计划分钟数缺失的历史记录没法算比值，跳过而不是当成 1.0。
+                continue
+            ratios.append((actual_seconds / 60) / planned)
+            if len(ratios) >= self.PACE_WINDOW:
+                break
+
+        if len(ratios) < self.PACE_MIN_SAMPLES:
+            return 1.0
+        ratios.sort()
+        middle = len(ratios) // 2
+        median = ratios[middle] if len(ratios) % 2 else (ratios[middle - 1] + ratios[middle]) / 2
+        return round(min(self.PACE_MAX, max(self.PACE_MIN, median)), 2)
+
+    # ---------- 每周时长 → 每日排课 ----------
+
+    def _daily_minutes_budget(self, user_id: str, book_id: str) -> int | None:
+        """用户设定的每周时长折算成每天分钟数；没设过目标返回 None。"""
+        if self.learner_goals is None:
+            return None
+        try:
+            return self.learner_goals.daily_minutes_budget(user_id=user_id, book_id=book_id)
+        except Exception:  # noqa: BLE001 - 目标读不出来不该让计划生成失败
+            return None
+
+    # 单个任务的绝对上限：2 小时。再长的一次性学习任务不现实，应该拆成两个。
+    MAX_TASK_MINUTES = 120
+    DEFAULT_TASK_MINUTES = 30
+
+    @staticmethod
+    def _max_task_minutes(session_budget: Any, daily_budget: int | None = None) -> int:
+        """单个任务的时长上限，由用户的「单次学习时长」偏好决定。
+
+        改动说明：原来这里写死上限 60，并且还拿每日预算再压一次。
+        结果是每周时长填得少的人，任务被压到二三十分钟——用户反馈「学不了那么快」，
+        想按一小时以上排课时根本排不出来。
+
+        现在只看单次时长偏好（15/30/45/60/90/120，用户在学习画像里选），
+        **不再用每日预算封顶**：每日预算决定任务摊几天做完，不决定一次坐下来学多久。
+        一个 120 分钟的任务遇上 40 分钟的日预算，会由 _apply_time_budget 独占一天，
+        而不是被砍成 40 分钟——砍短了任务就不完整了。
+
+        daily_budget 参数保留只为兼容既有调用，不再参与计算。
+        """
+        limit = int(session_budget) if session_budget else LearningPlanModule.DEFAULT_TASK_MINUTES
+        return max(5, min(LearningPlanModule.MAX_TASK_MINUTES, limit))
+
+    @staticmethod
+    def _apply_time_budget(
+        plan: dict[str, Any],
+        *,
+        daily_budget: int | None,
+        pace_factor: float = 1.0,
+        only_unfinished: bool = False,
+    ) -> dict[str, Any]:
+        """按每日分钟预算把任务顺序摊到具体日期上。
+
+        这是 weeklyHours 真正起作用的地方：以前它只是被保存下来，排出来的
+        计划和填 3 小时还是 15 小时没有任何区别。
+
+        做法是顺序装箱——任务保持原有优先级顺序，累计时长超过当天预算就开新的一天，
+        并把 expectedCompletionDate 写成对应日期。**不删任务、不压缩时长**：
+        计划的内容由诊断结果决定，时间预算只决定它摊多少天完成。
+        超长的单个任务（本身就超过一天预算）独占一天，不会被切碎。
+
+        pace_factor 是用户的实际速度校准：装箱时用 `minutes × pace_factor`
+        计算占用，但**任务自己的 minutes 保持 AI 的原始估计不变**。
+        这一点是刻意的——如果把校准值写回 minutes，下一轮算「计划 vs 实际」
+        的比值就会自动趋近 1，校准会把自己的输入抹掉，越校越准是假象。
+
+        only_unfinished=True 时只重排还没完成的任务，已完成任务的日期冻结在原处
+        （那是历史，不该因为改了目标就被改写）。
+        """
+        tasks = plan.get("tasks")
+        if not daily_budget or not isinstance(tasks, list) or not tasks:
+            return plan
+
+        factor = max(0.1, float(pace_factor or 1.0))
+        today = date.today()
+        day_index = 0
+        used = 0.0
+        scheduled: list[dict[str, Any]] = []
+        for item in tasks:
+            if not isinstance(item, dict):
+                scheduled.append(item)
+                continue
+            if only_unfinished and str(item.get("status", "")) == "completed":
+                scheduled.append(item)
+                continue
+            minutes = int(item.get("minutes", 0) or 0)
+            occupied = minutes * factor
+            if used and used + occupied > daily_budget:
+                day_index += 1
+                used = 0.0
+            used += occupied
+            task = dict(item)
+            task["expectedCompletionDate"] = (today + timedelta(days=day_index)).isoformat()
+            scheduled.append(task)
+
+        planned_total = sum(
+            int(item.get("minutes", 0) or 0)
+            for item in scheduled
+            if isinstance(item, dict) and not (only_unfinished and str(item.get("status", "")) == "completed")
+        )
+        days = day_index + 1
+        updated = dict(plan)
+        updated["tasks"] = scheduled
+        updated["timeBudget"] = {
+            "dailyMinutes": daily_budget,
+            "totalMinutes": planned_total,
+            "estimatedDays": days,
+            "paceFactor": round(factor, 2),
+            # 按实际速度折算出来的总时长，前端用它说「预计实际要花多久」。
+            "adjustedTotalMinutes": int(round(planned_total * factor)),
+        }
+        advice = [item for item in (updated.get("advice") or []) if not str(item).startswith(LearningPlanModule.SCHEDULE_ADVICE_PREFIX)]
+        advice.append(LearningPlanModule._schedule_advice(daily_budget, planned_total, days, factor))
+        updated["advice"] = list(dict.fromkeys(advice))
+        return updated
+
+    # 排课说明每次重排都会重写，用固定前缀标识，避免重排一次追加一条。
+    SCHEDULE_ADVICE_PREFIX = "按你设定的每天约"
+
+    @staticmethod
+    def _schedule_advice(daily_budget: int, planned_total: int, days: int, factor: float) -> str:
+        low, high = LearningPlanModule.PACE_NEUTRAL
+        base = (
+            f"{LearningPlanModule.SCHEDULE_ADVICE_PREFIX} {daily_budget} 分钟，"
+            f"这份计划共 {planned_total} 分钟，预计 {days} 天完成"
+        )
+        if low <= factor <= high:
+            return base + "；想更快就回到「选书与目标」调高每周时长。"
+        if factor > high:
+            return (
+                base
+                + f"。已按你最近的实际速度（约为计划用时的 {factor} 倍）放慢排课，"
+                "所以每天排的任务比原估计少。"
+            )
+        return (
+            base
+            + f"。你最近实际用时约为计划的 {factor} 倍，比估计快，已相应多排了一些。"
+        )
+
+    def reschedule(self, *, user_id: str, book_id: str) -> dict[str, Any] | None:
+        """按最新的每周时长和实际速度，重排在途计划里还没完成的任务日期。
+
+        只动日期，不动任务内容、不调模型、不碰已完成的任务，所以是无损的，
+        可以在「保存学习目标」和「完成一个任务」之后自动触发。
+        任务内容本身要不要变（比如目标水平从「复述概念」改成「应对面试」）
+        属于重新生成计划，那会丢掉当前进度，必须由用户显式确认，不在这里做。
+        """
+        daily_budget = self._daily_minutes_budget(user_id, book_id)
+        if not daily_budget:
+            return None
+        payload = self.reader.read(allow_missing=True, allow_empty=False)
+        if not isinstance(payload, dict) or not payload:
+            return None
+
+        factor = self.pace_factor(user_id, book_id)
+        updated_plan: dict[str, Any] | None = None
+        for key, record in payload.items():
+            if not isinstance(record, dict):
+                continue
+            if record.get("userId") != user_id or record.get("bookId") != book_id:
+                continue
+            if record.get("status") == "completed":
+                continue
+            plan = record.get("plan")
+            if not isinstance(plan, dict):
+                continue
+            updated_plan = self._apply_time_budget(
+                plan,
+                daily_budget=daily_budget,
+                pace_factor=factor,
+                only_unfinished=True,
+            )
+            self.persist_plan(
+                book_id=book_id,
+                diagnostic_id=str(record.get("diagnosticId", "")),
+                plan=updated_plan,
+                plan_key=key,
+                user_id=user_id,
+            )
+        return updated_plan
 
     def create_from_material(
         self,
@@ -297,6 +563,7 @@ class LearningPlanModule:
         minutes: int,
         expected_completion_date: str,
         resources: list[dict[str, Any]],
+        user_id: str = "",
     ) -> dict[str, Any]:
         """根据资料问答来源创建并持久化一个自定义学习任务。"""
 
@@ -324,6 +591,7 @@ class LearningPlanModule:
             advice=["建议先阅读关联教材，再回到资料问答中进行复习和追问。"],
             resources=resources,
             plan_key=f"{book_id}:material:{task_id}",
+            user_id=user_id,
         )
 
     @staticmethod
@@ -440,7 +708,7 @@ class LearningPlanModule:
         return list(units.values())
     
     #生成任务字段
-    def _build_task(self, diagnostic_id: str, result: dict[str, Any], index: int, goal: str) -> dict[str, Any]:
+    def _build_task(self, diagnostic_id: str, result: dict[str, Any], index: int, goal: str, session_budget: Any = None) -> dict[str, Any]:
         """把一个能力级计划单元转换为任务，知识点是任务的支撑范围。"""
         ability_id = str(result.get("ability_id", "ability"))
         #把内部能力 ID 转换为用户可读名称
@@ -448,7 +716,7 @@ class LearningPlanModule:
         status = str(result.get("status", STATUSES[0]))
         correct = int(result.get("correct", 0))
         total = int(result.get("total", 0))
-        minutes = self._minutes_for(status)
+        minutes = self._minutes_for(status, session_budget)
         return LearningTask(
             id=f"{diagnostic_id}-ability-{ability_id}",
             ability_id=ability_id,
@@ -465,13 +733,25 @@ class LearningPlanModule:
         ).to_dict()
 
     @staticmethod
-    def _minutes_for(status: str) -> int:
-        """根据知识点掌握状态估算本次学习任务所需分钟数。"""
+    def _minutes_for(status: str, session_budget: Any = None) -> int:
+        """根据知识点掌握状态和用户的单次学习时长偏好估算任务时长。
+
+        原来这里写死 25/20/15 分钟，跟用户在画像里选的单次时长完全无关——
+        所以不管选 30 分钟还是 2 小时，排出来的任务都是二十几分钟。
+
+        现在以单次时长偏好为基准按掌握程度缩放：越薄弱的知识点占满整段学习时间，
+        越熟练的越短。偏好 30 分钟 → 30/23/15，和过去接近；
+        偏好 120 分钟 → 120/90/60，就能排出一到两小时的任务。
+        """
+        base = int(session_budget) if session_budget else LearningPlanModule.DEFAULT_TASK_MINUTES
+        base = max(5, min(LearningPlanModule.MAX_TASK_MINUTES, base))
         if status in {STATUSES[0], STATUSES[1]}:
-            return 25
-        if status == STATUSES[2]:
-            return 20
-        return 15
+            ratio = 1.0      # 不会 / 了解：占满一整段
+        elif status == STATUSES[2]:
+            ratio = 0.75     # 熟悉：巩固一下
+        else:
+            ratio = 0.5      # 掌握：快速回顾
+        return max(5, int(round(base * ratio / 5) * 5))
 
     @staticmethod
     def _diagnostic_summary(question_evidence: list[dict[str, Any]]) -> dict[str, Any]:

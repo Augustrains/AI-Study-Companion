@@ -107,6 +107,7 @@ class MaterialQaService:
             citations=output.citations,
             related_knowledge_points=output.related_knowledge_points,
             recommended_action=output.recommended_action,
+            answered_by_general_model=output.answered_by_general_model,
         )
 
     #业务校验
@@ -125,11 +126,13 @@ class MaterialQaService:
         history: list[MaterialQaMessage],
         question: str,
         retrieval: MaterialQaRetrievalResult,
+        allow_general_fallback: bool = False,
     ) -> MaterialQaAgentInput:
         return MaterialQaAgentInput(
             history=history,
             current_question=question,
             retrieval=retrieval,
+            allow_general_fallback=allow_general_fallback,
         )
 
 

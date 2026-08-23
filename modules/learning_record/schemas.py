@@ -60,7 +60,13 @@ class LearningEventRequest(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    user_id: str = Field(default="user_001", alias="userId", min_length=1)
+    user_id: str = Field(alias="userId", min_length=1)
+    """调用方必须显式给出用户 ID。
+
+    这里原先默认 "user_001"：前端漏传时后端静默按演示用户处理，
+    结果是诊断写进一个账号、今日学习读另一个账号，闭环表面正常实则断开。
+    改成必填后，漏传会立刻在联调阶段以 422 暴露出来。
+    """
     task_id: str = Field(alias="taskId", min_length=1)
     task_title: str = Field(default="", alias="taskTitle")
     event_type: str = Field(alias="eventType", min_length=1)
@@ -68,6 +74,10 @@ class LearningEventRequest(BaseModel):
     plan_id: str = Field(default="", alias="planId")
     book_id: str = Field(default="", alias="bookId")
     knowledge_point_ids: list[str] = Field(default_factory=list, alias="knowledgePointIds")
+    # 用户在完成弹窗里自己填写的实际用时（秒）。0 表示未填写。
+    duration_seconds: int = Field(default=0, alias="durationSeconds", ge=0)
+    # 计划预估用时（分钟），与实际用时一起保存，用于后续校准排课。
+    planned_minutes: int = Field(default=0, alias="plannedMinutes", ge=0)
     detail: dict[str, Any] = Field(default_factory=dict)
     client_request_id: str = Field(default="", alias="clientRequestId")
 
@@ -79,6 +89,8 @@ class LearningEventResponse(BaseModel):
     activity: LearningActivityResponse
     plan_completed: bool = Field(default=False, alias="planCompleted")
     memory_updated: bool = Field(default=False, alias="memoryUpdated")
+    # 这次完成带来的新用时样本是否触发了剩余任务的重排。
+    plan_rescheduled: bool = Field(default=False, alias="planRescheduled")
 
 
 class LearningActivityQuery(BaseModel):

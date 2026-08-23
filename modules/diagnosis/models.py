@@ -26,6 +26,10 @@ class QuestionPlanningInput:
     learning_goal: str
     knowledge_point_mastery: dict[str, str]
     knowledge_point_memory: dict[str, dict[str, Any]]
+    # 该用户历史诊断中已作答过的题目 ID，用于复测时优先出新题
+    answered_question_ids: list[str]
+    # 第几轮诊断（从 1 开始），作为选题打乱的种子之一
+    diagnosis_round: int
     available_question_counts: dict[str, int]
     knowledge_point_catalog: dict[str, dict[str, str]] = field(default_factory=dict)
 
@@ -132,6 +136,10 @@ class DiagnosisState(TypedDict, total=False):
     learning_goal: str
     knowledge_point_mastery: dict[str, str]
     knowledge_point_memory: dict[str, dict[str, Any]]
+    # 该用户历史诊断中已作答过的题目 ID，用于复测时优先出新题
+    answered_question_ids: list[str]
+    # 第几轮诊断（从 1 开始），作为选题打乱的种子之一
+    diagnosis_round: int
     questions: list[dict[str, Any]]
     correct_answers: dict[str, str]
     answers: dict[str, str]

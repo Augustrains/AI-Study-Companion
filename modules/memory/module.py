@@ -30,32 +30,57 @@ class MemoryModule:
         return self.repository.upsert(memory)
 
     def sync_learner_profile(self, profile: Any) -> LearnerMemory:
+        """把学习画像同步进记忆，但**不覆盖掌握度**。
+
+        改动原因（这里原来是掌握度的第二条写入通道，而且是破坏性的）：
+
+        1. 原实现第一步就是
+           `memory.knowledge_points = [item for item in ... if id in known]`
+           ——保存一次画像，所有没勾选的知识点记忆**直接被删掉**，
+           包括诊断辛苦测出来的那些。
+        2. 对勾选的知识点，原实现写 `mastery_level=掌握 / score=1.0 /
+           confidence=1.0 / memory_status=稳定保持 / stability=60天`，
+           也就是「用户说他会」等价于「满分且已稳定保持」，直接盖掉诊断结论。
+
+        现在的规则，对应我们定下的语义：
+          - 画像是**学习前的自述**，只在某个知识点还没有任何记忆时，
+            作为冷启动先验落一条「未验证」的低置信记录；
+          - 一旦某个知识点已经有记录（诊断产生的），自述**只作参考、不动它**；
+          - 困惑和偏好属于画像自己的字段，照常同步。
+
+        掌握度的唯一权威来源是 `ingest_diagnosis`（诊断 + 用户校准）。
+        """
+
         memory = self.get_learner_memory(profile.user_id, profile.learning_domain)
         known = {str(item) for item in profile.known_knowledge_point_ids if item}
         now = self.repository.now()
         existing = {item.knowledge_point_id: item for item in memory.knowledge_points}
-        memory.knowledge_points = [item for item in memory.knowledge_points if item.knowledge_point_id in known]
         description = str(getattr(profile, "known_knowledge_point_note", "") or "")
+
         for key in sorted(known):
-            previous = existing.get(key)
+            if key in existing:
+                # 已有记忆一律保留：诊断证据优先于自述，自述不覆盖已测过的结论。
+                continue
             point = KnowledgePointMemory(
                 knowledge_point_id=key,
-                name=previous.name if previous else "",
+                name="",
                 description=description,
-                mastery_level=MASTERY_LEVELS[-1],
-                mastery_score=1.0,
-                confidence=1.0,
-                memory_status="稳定保持",
-                memory_stability_days=60.0,
+                # 自述「我会」= 冷启动先验，不是结论：给最低的正向等级、
+                # 低置信、未验证状态，让诊断少花一两道题在这里，但仍然会测。
+                mastery_level=MASTERY_LEVELS[1],
+                mastery_score=0.5,
+                confidence=0.3,
+                memory_status="未验证",
+                memory_stability_days=0.0,
                 evidence_summary=EvidenceSummary(),
                 next_review_at=None,
                 updated_at=now,
-                update_count=(previous.update_count + 1) if previous else 1,
+                update_count=1,
                 source="learner_profile",
             )
             validate_knowledge_point_memory(point)
-            memory.knowledge_points = [item for item in memory.knowledge_points if item.knowledge_point_id != key]
             memory.knowledge_points.append(point)
+
         memory.current_confusions = str(profile.current_confusions)
         memory.preferences = profile.preferences.to_dict() if hasattr(profile.preferences, "to_dict") else dict(profile.preferences.__dict__)
         return self._save(memory)

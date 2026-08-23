@@ -62,6 +62,8 @@ class MaterialQaAgentInput:
     history: list[MaterialQaMessage]
     current_question: str
     retrieval: MaterialQaRetrievalResult
+    # 检索不足时是否允许改用通用模型作答（由 API 层透传，默认关闭）。
+    allow_general_fallback: bool = False
 
 
 @dataclass(frozen=True)
@@ -73,6 +75,8 @@ class MaterialQaAgentOutput:
     citations: list[MaterialQaSource]
     related_knowledge_points: list[str]
     recommended_action: str
+    # True 表示这条回答来自通用模型、没有教材出处，前端需要单独标注。
+    answered_by_general_model: bool = False
 
 
 @dataclass(frozen=True)
@@ -85,3 +89,4 @@ class MaterialQaAnswer:
     citations: list[MaterialQaSource]
     related_knowledge_points: list[str]
     recommended_action: str
+    answered_by_general_model: bool = False
