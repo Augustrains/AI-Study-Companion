@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+pytest-cache-files-*/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+
+# Frontend dependencies and build output
+front/frontend/node_modules/
+front/frontend/dist/
+.pnpm-store/
+
+# Local runtime data and temporary files
+tmp/
+.test-data/
+*.log
+
+# Generated local AI assets and runtime persistence
+models/
+data/qdrant/
+data/qdrant-bge-small-zh/
+data/learning_plan/
+data/learning_record/
+data/memory/
+
+# Upstream source repositories are large and reproducible. Keep the curated
+# catalogs and formal material units under data/02-内容与数据 instead.
+data/02-内容与数据/原始资料/
+
+# IDE and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 上游教材仓库：很大且可从 GitHub 重新克隆
+data/question_new/教材/
+
+# 运行时产物
+data/qdrant-bge-m3/
+data/_demo_backup/
+
+# 账号凭据，永远不进版本库
+data/auth/

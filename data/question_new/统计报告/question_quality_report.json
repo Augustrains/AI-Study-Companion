@@ -1,0 +1,35 @@
+{
+  "valid": true,
+  "scope": {
+    "quiz_count": 301,
+    "practice_count": 122,
+    "allowed_sources": [
+      "microsoft-ml-for-beginners",
+      "microsoft-ai-for-beginners"
+    ]
+  },
+  "coverage": {
+    "quiz_mapping_candidate_count": 301,
+    "practice_mapping_candidate_count": 122,
+    "zh_localization_candidate_count": 301
+  },
+  "quiz_quality": {
+    "structurally_valid_count": 0,
+    "needs_review_count": 301,
+    "blocked_count": 0,
+    "correct_option_distribution": {
+      "A": 127,
+      "B": 100,
+      "C": 74
+    },
+    "blocker_counts": {},
+    "warning_counts": {
+      "COMPOUND_OPTION_REVIEW": 14,
+      "NEGATIVE_WORDING_REVIEW": 8,
+      "STRUCTURAL_EXPLANATION_NEEDS_SME_REVIEW": 301,
+      "VERY_SHORT_STEM": 15
+    }
+  },
+  "release_state": "hold",
+  "note": "结构审计通过不等于内容审核通过；警告项仍需学科人员确认。"
+}

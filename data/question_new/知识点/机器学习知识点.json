@@ -1,0 +1,33 @@
+{
+  "book_id": "ml-001",
+  "book_name": "ML-For-Beginners",
+  "subject": "机器学习",
+  "knowledge_points": [
+    {"knowledge_point_id": "kp-ml-intro", "name": "机器学习概念", "description": "介绍机器学习的基本概念、典型任务，以及模型如何从数据中学习规律并用于预测或决策。"},
+    {"knowledge_point_id": "kp-ml-history", "name": "机器学习发展历史", "description": "了解机器学习从早期人工智能、统计学习到现代数据驱动模型的发展脉络和重要阶段。"},
+    {"knowledge_point_id": "kp-ml-fairness", "name": "机器学习公平性", "description": "讨论训练数据、模型预测和应用决策中的偏差、公平性与责任问题。"},
+    {"knowledge_point_id": "kp-ml-tools", "name": "机器学习工具与技术", "description": "介绍机器学习实践中常用的编程工具、数据处理方法、可视化工具和建模技术。"},
+    {"knowledge_point_id": "kp-ml-regression-intro", "name": "回归简介", "description": "理解回归问题的目标，即根据输入特征预测连续数值，并认识回归模型的基本形式。"},
+    {"knowledge_point_id": "kp-ml-regression-data", "name": "回归数据准备与可视化", "description": "学习回归建模前的数据清洗、特征选择、数据探索和可视化方法。"},
+    {"knowledge_point_id": "kp-ml-linear-polynomial-regression", "name": "线性回归与多项式回归", "description": "掌握使用线性函数或多项式函数拟合数据，并理解模型参数、拟合效果和预测结果。"},
+    {"knowledge_point_id": "kp-ml-logistic-regression", "name": "逻辑回归", "description": "理解逻辑回归如何通过概率和决策边界完成分类任务。"},
+    {"knowledge_point_id": "kp-ml-web-app", "name": "构建机器学习 Web 应用", "description": "学习将训练好的机器学习模型封装到 Web 应用中，为用户提供预测服务。"},
+    {"knowledge_point_id": "kp-ml-classification-intro", "name": "分类基础", "description": "理解分类问题、类别标签、训练数据和分类模型的基本概念。"},
+    {"knowledge_point_id": "kp-ml-classifiers-1", "name": "分类模型一", "description": "学习第一组常见分类算法及其决策方式、适用场景和基本使用方法。"},
+    {"knowledge_point_id": "kp-ml-classifiers-2", "name": "分类模型二", "description": "比较其他常见分类算法的建模思路、参数和预测特点。"},
+    {"knowledge_point_id": "kp-ml-classification-applied", "name": "分类实践", "description": "将分类算法应用到真实数据集，并完成数据准备、训练、评估和结果解释。"},
+    {"knowledge_point_id": "kp-ml-clustering-intro", "name": "聚类简介", "description": "理解无监督学习中的聚类任务，以及在没有标签时发现数据群组的方法。"},
+    {"knowledge_point_id": "kp-ml-kmeans", "name": "K-Means 聚类", "description": "掌握 K-Means 的簇中心、距离计算、迭代更新和聚类结果解释。"},
+    {"knowledge_point_id": "kp-ml-nlp-intro", "name": "自然语言处理简介", "description": "介绍如何将自然语言转换为可计算的数据，并概览文本分析的主要任务。"},
+    {"knowledge_point_id": "kp-ml-nlp-tasks", "name": "自然语言处理任务", "description": "了解文本分类、情感分析、翻译等常见 NLP 任务及其机器学习建模方式。"},
+    {"knowledge_point_id": "kp-ml-nlp-translation", "name": "自然语言处理与翻译", "description": "理解机器翻译的基本目标、文本表示方式和从一种语言生成另一种语言的方法。"},
+    {"knowledge_point_id": "kp-ml-nlp-sentiment-1", "name": "情感分析一", "description": "学习根据文本内容判断情感倾向的基本流程、特征表示和分类方法。"},
+    {"knowledge_point_id": "kp-ml-nlp-sentiment-2", "name": "情感分析二", "description": "进一步实践情感分析模型，并关注数据质量、模型效果和结果解释。"},
+    {"knowledge_point_id": "kp-ml-timeseries-intro", "name": "时间序列简介", "description": "理解按时间顺序记录的数据及其趋势、季节性、周期性和预测问题。"},
+    {"knowledge_point_id": "kp-ml-timeseries-arima", "name": "时间序列 ARIMA", "description": "学习 ARIMA 模型对时间序列中的自回归、差分和移动平均关系进行建模。"},
+    {"knowledge_point_id": "kp-ml-reinforcement-qlearning", "name": "强化学习一：Q 学习", "description": "理解智能体、状态、动作、奖励和价值，并掌握 Q 学习通过经验更新动作价值的基本思想。"},
+    {"knowledge_point_id": "kp-ml-reinforcement-gym", "name": "强化学习二：Gym 环境", "description": "学习在标准环境中构建和测试强化学习智能体，并观察策略与累计奖励的变化。"},
+    {"knowledge_point_id": "kp-ml-real-world-applications", "name": "真实世界机器学习应用", "description": "了解机器学习在实际业务和社会场景中的应用流程、限制、风险与部署要求。"},
+    {"knowledge_point_id": "kp-ml-timeseries-svr", "name": "时间序列 SVR", "description": "理解支持向量回归在时间序列预测中的使用方式，以及特征、核函数和预测误差的关系。"}
+  ]
+}

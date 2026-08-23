@@ -1,0 +1,55 @@
+{
+  "user_001": {
+    "machine_learning": {
+      "created_at": "2026-08-14T10:50:56.135877+00:00",
+      "updated_at": "2026-08-14T10:50:56.135877+00:00",
+      "user_id": "user_001",
+      "learning_domain": "machine_learning",
+      "background": "了解过机器学习入门知识",
+      "self_assessed_level": "unknown",
+      "known_knowledge_point_ids": [
+        "kp-ml-intro",
+        "kp-ml-history"
+      ],
+      "known_knowledge_point_note": "",
+      "unknown_knowledge_point_ids": [
+        "kp-ml-fairness",
+        "kp-ml-tools",
+        "kp-ml-regression-intro",
+        "kp-ml-regression-data",
+        "kp-ml-linear-polynomial-regression",
+        "kp-ml-logistic-regression",
+        "kp-ml-web-app",
+        "kp-ml-classification-intro",
+        "kp-ml-classifiers-1",
+        "kp-ml-classifiers-2",
+        "kp-ml-classification-applied",
+        "kp-ml-clustering-intro",
+        "kp-ml-kmeans",
+        "kp-ml-nlp-intro",
+        "kp-ml-nlp-tasks",
+        "kp-ml-nlp-translation",
+        "kp-ml-nlp-sentiment-1",
+        "kp-ml-nlp-sentiment-2",
+        "kp-ml-timeseries-intro",
+        "kp-ml-timeseries-arima",
+        "kp-ml-reinforcement-qlearning",
+        "kp-ml-reinforcement-gym",
+        "kp-ml-real-world-applications",
+        "kp-ml-timeseries-svr"
+      ],
+      "preferences": {
+        "activity_types": [
+          "reading",
+          "quiz"
+        ],
+        "content_style": "balanced",
+        "difficulty": "adaptive",
+        "session_duration_minutes": 30,
+        "learning_frequency": "flexible"
+      },
+      "current_confusions": "无",
+      "additional_requirements": "无"
+    }
+  }
+}
