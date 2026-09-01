@@ -296,7 +296,7 @@ class AuthService:
             created_at=_now().isoformat(),
             iterations=iterations,
         )
-        self.store.create(record)
+        record = self.store.create(record)
         return self._session(record)
 
     def login(self, *, account: str, password: str) -> AuthSession:

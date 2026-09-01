@@ -22,12 +22,13 @@ class AuthModule:
         self,
         store_path: str | Path | None = None,
         *,
+        store: AccountStore | None = None,
         token_secret: str | None = None,
         expose_code: bool | None = None,
         seed_demo_account: bool = True,
     ) -> None:
         self.service = AuthService(
-            store=AccountStore(store_path),
+            store=store or AccountStore(store_path),
             hasher=PasswordHasher(),
             tokens=TokenService(token_secret),
             codes=VerificationCodeService(expose_code),

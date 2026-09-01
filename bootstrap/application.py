@@ -2,7 +2,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from modules.common import api as common_api
+from modules.common.database import create_mysql_engine
 from modules.auth.module import AuthModule
+from modules.auth.repository import MysqlAccountStore
 from modules.diagnosis.agent import DiagnosticAgent
 from modules.diagnosis.services import AssessmentService, DiagnosisResultStore, GeneratedQuestionBank
 from modules.diagnosis.workflow import DiagnosisWorkflow
@@ -111,7 +113,10 @@ def build_api_dependencies(settings: common_api.config.Settings | None = None) -
         learning_record=learning_record_module,
         today_learning=today_learning_module,
         learner_goals=learner_goal_module,
-        auth=AuthModule(),
+        auth=AuthModule(
+            store=MysqlAccountStore(create_mysql_engine(settings)),
+            seed_demo_account=False,
+        ),
     )
 
 
