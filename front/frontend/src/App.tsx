@@ -7,7 +7,7 @@ import { SettingsView } from "./components/SettingsView";
 import { InlineResources, LearningResourcesView } from "./components/LearningResources";
 import { HelpCenterView } from "./components/HelpCenter";
 import { auth, getSession, type AuthUser } from "./services/session";
-import { api, type ApiError, type BookCatalogItem, type DiagnosticResult, type LearningActivity, type LearningPlanResult, type PlanTimeBudget, type TodayLearningResponse } from "./services/api";
+import { api, type ApiError, type BookCatalogItem, type DiagnosticResult, type LearningActivity, type LearningPlanResult, type PlanTimeBudget, type QaAnswerMode, type TodayLearningResponse } from "./services/api";
 import {
   books,
   getBookContent,
@@ -33,6 +33,10 @@ type QaMessage = {
   fromGeneralModel?: boolean;
   /** 触发这条回答的原始问题，用于降级重问 */
   question?: string;
+  answerMode?: QaAnswerMode;
+  socraticState?: string | null;
+  responseQuality?: string | null;
+  socraticCompleted?: boolean;
 };
 type ModalState = {
   title: string;
@@ -132,8 +136,11 @@ function App() {
   const [qaError, setQaError] = useState<string | null>(null);
   const [qaMessages, setQaMessages] = useState<QaMessage[]>([]);
   const [qaSources, setQaSources] = useState<Source[]>([]);
-  const [qaConversationId, setQaConversationId] = useState<string | null>(null);
-  const [qaConversationBusy, setQaConversationBusy] = useState(false);
+  // 该令牌只用于兼容现有接口；持久化上下文由 userId + bookId + reset 标记决定。
+  const [qaContextToken, setQaContextToken] = useState<string | null>(null);
+  const [qaContextBusy, setQaContextBusy] = useState(false);
+  const [qaAnswerMode, setQaAnswerMode] = useState<QaAnswerMode>("direct");
+  const [qaLearningTaskId, setQaLearningTaskId] = useState<string | null>(null);
 
   // 优先使用目录接口返回的书籍信息，目录未加载时回退本地定义。
   const currentBook = useMemo<Book>(() => {
@@ -175,24 +182,67 @@ function App() {
 
   const closeModal = () => setModal(null);
 
-  const initializeQaConversation = async (nextBookId: BookId) => {
-    setQaConversationBusy(true);
-    setQaConversationId(null);
+  const initializeQaContext = async (nextBookId: BookId, resetContext = false) => {
+    setQaContextBusy(true);
+    setQaContextToken(null);
     setQaMessages([]);
     setQaSources([]);
     setQaError(null);
     try {
-      const conversation = await api.createConversation(nextBookId);
-      setQaConversationId(conversation.conversationId);
+      const context = await api.initializeQaContext(nextBookId, resetContext);
+      setQaContextToken(context.conversationId);
+      setQaAnswerMode(context.answerMode ?? "direct");
+      setQaLearningTaskId(context.learningTaskId ?? null);
+      if (resetContext) showToast("已清空对话", "之后的回答不会再使用此前的问答内容。");
     } catch (error) {
       setQaError(errorMessage(error));
     } finally {
-      setQaConversationBusy(false);
+      setQaContextBusy(false);
     }
   };
 
+  const clearQaContext = () => {
+    if (qaBusy) {
+      showToast("暂时不能清空", "请等待当前回答完成后再清空对话。");
+      return;
+    }
+    if (qaContextBusy) return;
+    void initializeQaContext(bookId, true);
+  };
+
+  const changeQaAnswerMode = async (mode: QaAnswerMode) => {
+    if (qaBusy || qaContextBusy) return;
+    if (mode === qaAnswerMode) return;
+    if (qaLearningTaskId) {
+      try {
+        await api.finishQaLearningTask(bookId, qaLearningTaskId);
+      } catch (error) {
+        showToast("切换失败", errorMessage(error));
+        return;
+      }
+    }
+    setQaAnswerMode(mode);
+    // Choosing a mode starts a fresh teaching task without erasing chat history.
+    setQaLearningTaskId(null);
+    setQaError(null);
+  };
+
+  const finishSocraticTask = async () => {
+    if (qaBusy) return;
+    if (qaLearningTaskId) {
+      try {
+        await api.finishQaLearningTask(bookId, qaLearningTaskId);
+      } catch (error) {
+        showToast("结束引导失败", errorMessage(error));
+        return;
+      }
+    }
+    setQaLearningTaskId(null);
+    showToast("已结束本轮引导", "下一次提问将开始一个新的学习任务。");
+  };
+
   useEffect(() => {
-    void initializeQaConversation(books[0].id);
+    void initializeQaContext(books[0].id);
   }, []);
 
   useEffect(() => {
@@ -347,7 +397,7 @@ function App() {
     setDiagnosticResult(null);
     setCalibration(null);
     setCalibrationReason("");
-    void initializeQaConversation(nextBookId);
+    void initializeQaContext(nextBookId);
     showToast("已切换学习内容", `${getBookContent(nextBookId).goal}的页面内容已更新。`);
   };
 
@@ -583,11 +633,11 @@ function App() {
 
   const askQuestion = async () => {
     const question = qaInput.trim();
-    if (!question || qaBusy || qaConversationBusy) {
+    if (!question || qaBusy || qaContextBusy) {
       if (!question) showToast("请输入问题", "输入问题后再发送。 ");
       return;
     }
-    if (!qaConversationId) {
+    if (!qaContextToken) {
       setQaError("问答会话尚未创建完成，请稍后重试。");
       return;
     }
@@ -606,7 +656,15 @@ function App() {
     setQaBusy(true);
     setQaError(null);
     try {
-      const result = await api.askQuestion({ bookId, question, conversationId: qaConversationId ?? undefined, sources: content.sources, allowGeneralFallback });
+      const result = await api.askQuestion({
+        bookId,
+        question,
+        conversationId: qaContextToken ?? undefined,
+        sources: content.sources,
+        allowGeneralFallback,
+        answerMode: allowGeneralFallback ? "direct" : qaAnswerMode,
+        learningTaskId: allowGeneralFallback ? null : qaLearningTaskId,
+      });
       if (!result.refused) setQaSources(result.citations);
       const fromGeneralModel = Boolean(result.answeredByGeneralModel) || (allowGeneralFallback && !result.refused && result.citations.length === 0);
       setQaMessages((messages) => [...messages, {
@@ -616,7 +674,15 @@ function App() {
         refused: result.refused,
         fromGeneralModel,
         question,
+        answerMode: result.answerMode ?? qaAnswerMode,
+        socraticState: result.socraticState,
+        responseQuality: result.responseQuality,
+        socraticCompleted: result.socraticCompleted,
       }]);
+      if (result.answerMode === "socratic") {
+        setQaLearningTaskId(result.socraticCompleted ? null : (result.learningTaskId ?? null));
+        if (result.socraticCompleted) showToast("本轮引导已完成", "你已经通过了迁移验证，可以开始新的问题。");
+      }
       if (allowGeneralFallback && result.refused) {
         // 后端尚未实现 allowGeneralFallback 时会再次拒答，如实告知而不是静默失败。
         setQaError("后端暂不支持通用模型回答（需实现 allowGeneralFallback 参数）。");
@@ -666,7 +732,7 @@ function App() {
         {activeNav === "settings" && <SettingsView user={user} onUserUpdated={setUser} onLogout={handleLogout} />}
         {activeNav === "resources" && <LearningResourcesView knowledgePointNames={knowledgePointNames} />}
         {activeNav === "help" && <HelpCenterView onNavigate={goTo} />}
-        {activeNav === "qa" && <QaView book={currentBook} sources={qaSources} messages={qaMessages} value={qaInput} busy={qaBusy} error={qaError} onChange={setQaInput} onAsk={askQuestion} onNew={() => void initializeQaConversation(bookId)} onOpenSource={openSource} onAddPlan={openMaterialPlanEditor} onAskGeneral={askWithGeneralModel} relatedKnowledgePointIds={(todayLearning?.knowledgeGraph.nodes ?? []).filter((node) => node.status === "weak").map((node) => node.id)} />}
+        {activeNav === "qa" && <QaView book={currentBook} sources={qaSources} messages={qaMessages} value={qaInput} busy={qaBusy} error={qaError} answerMode={qaAnswerMode} hasActiveLearningTask={Boolean(qaLearningTaskId)} onAnswerModeChange={changeQaAnswerMode} onFinishSocraticTask={finishSocraticTask} onChange={setQaInput} onAsk={askQuestion} onNew={clearQaContext} onOpenSource={openSource} onAddPlan={openMaterialPlanEditor} onAskGeneral={askWithGeneralModel} relatedKnowledgePointIds={(todayLearning?.knowledgeGraph.nodes ?? []).filter((node) => node.status === "weak").map((node) => node.id)} />}
       </main>
 
       {toast && <div className="toast" role="status"><div className="toast-icon"><Icon name="check" size={17} /></div><div><strong>{toast.title}</strong><span>{toast.message}</span></div></div>}
@@ -822,13 +888,11 @@ function RecordsView({ records, total, page, pageSize, loading, filter, setFilte
   return <div className="page-stack"><PageHeader eyebrow="学习事件 · 可追溯" title="学习记录" description="查看人物画像、资料问答、能力诊断和学习任务活动。" action={<label className="filter-select"><Icon name="filter" size={15} /><select value={filter} onChange={(event) => setFilter(event.target.value as typeof filter)} aria-label="筛选学习记录"><option value="all">全部记录</option><option value="profile">人物画像</option><option value="task">学习任务</option><option value="diagnostic">能力诊断</option><option value="qa">资料问答</option></select></label>} /><section className="records-layout"><article className="card record-timeline"><div className="card-heading"><span>最近活动</span><span className="completion">{loading ? "正在加载" : `共 ${total} 个结果`}</span></div>{loading ? <EmptyState text="正在加载学习记录" /> : records.length === 0 ? <EmptyState text="暂时没有符合条件的记录" /> : records.map((item) => <div className="record-item" key={item.id}><div className={`record-icon ${item.tone}`}><Icon name={item.icon} size={16} /></div><div className="record-copy"><strong>{item.title}</strong><p>{item.description}</p><span>{item.time}</span></div><button className="icon-button" onClick={() => onOpenRecord(item)} aria-label="查看记录详情"><Icon name="chevron-right" size={17} /></button></div>)}{total > pageSize && <div className="record-pagination" aria-label="学习记录分页">{Array.from({ length: pageCount }, (_, index) => index + 1).map((pageNumber) => <button key={pageNumber} className={pageNumber === page ? "active" : ""} onClick={() => onPageChange(pageNumber)} disabled={loading}>{pageNumber}</button>)}</div>}</article>{records.length > 0 && <article className="card review-card"><div className="card-heading"><span>待复测</span><span className="status-pill warning">后端返回后显示</span></div><p>完成诊断后，系统会根据能力状态返回复测安排。</p><div className="review-item"><div><strong>开始复测</strong><span>重新检查当前知识点掌握情况</span></div><button className="secondary-button" onClick={onReview}>去复测</button></div></article>}</section></div>;
 }
 
-function QaView({ book, sources, messages, value, busy, error, onChange, onAsk, onNew, onOpenSource, onAddPlan, onAskGeneral, relatedKnowledgePointIds }: { book: Book; sources: Source[]; messages: QaMessage[]; value: string; busy: boolean; error: string | null; onChange: (value: string) => void; onAsk: () => void; onNew: () => void; onOpenSource: (source: Source) => void; onAddPlan: () => void; onAskGeneral: (question: string) => void; relatedKnowledgePointIds: string[] }) {
+function QaView({ book, sources, messages, value, busy, error, answerMode, hasActiveLearningTask, onAnswerModeChange, onFinishSocraticTask, onChange, onAsk, onNew, onOpenSource, onAddPlan, onAskGeneral, relatedKnowledgePointIds }: { book: Book; sources: Source[]; messages: QaMessage[]; value: string; busy: boolean; error: string | null; answerMode: QaAnswerMode; hasActiveLearningTask: boolean; onAnswerModeChange: (mode: QaAnswerMode) => void; onFinishSocraticTask: () => void; onChange: (value: string) => void; onAsk: () => void; onNew: () => void; onOpenSource: (source: Source) => void; onAddPlan: () => void; onAskGeneral: (question: string) => void; relatedKnowledgePointIds: string[] }) {
   const sourceBookTitle = (source: Source) => books.find((item) => item.id === source.bookId)?.title ?? book.title;
   const uniqueSources = mergeSourcesByChapter(sources);
-  // 「清空对话」= 向后端要一个新的 conversationId 并清空消息列表。
-  // 不叫「新建对话」是因为旧对话没有任何入口能回去：会话只存在后端进程内存里，
-  // 也没有会话列表接口。要做成真正的多会话，需要会话持久化 + 列表接口 + 侧栏切换。
-  return <div className="page-stack"><PageHeader eyebrow="资料驱动 · 保留引用" title="资料问答" description="围绕当前学习内容和学习目标提问，回答会保留资料出处。" action={<button className="outline-button" onClick={onNew} title="清空当前对话，重新开始一轮提问">清空对话 <Icon name="trash" size={15} /></button>} /><section className="qa-layout"><article className="card conversation-card"><div className="conversation-head"><div><span className="section-label">当前范围</span><strong>{book.title} · {book.subtitle}</strong></div><span className="status-pill blue">已绑定知识点</span></div><div className="message-list">{messages.map((message, index) => <div className={`message ${message.role}`} key={`${message.role}-${index}`}><span className="message-avatar">{message.role === "assistant" ? "✦" : "我"}</span><div>{message.fromGeneralModel && <div className="general-model-tag"><Icon name="alert" size={13} />此回答来自通用模型，未经教材验证，不计入学习记录</div>}<p className={message.fromGeneralModel ? "general-model-answer" : undefined}>{message.text}</p>{message.role === "assistant" && message.refused && <div className="qa-fallback"><span>资料里没有找到能支持这个问题的依据。</span><button type="button" onClick={() => onAskGeneral(message.question ?? "")} disabled={!message.question}>用通用模型回答（无教材引用）</button><InlineResources knowledgePointIds={relatedKnowledgePointIds} title="或者看看这些资料" /></div>}{message.role === "assistant" && !message.refused && !message.fromGeneralModel && <div className="citation-row">{mergeSourcesByChapter(message.citations ?? sources).map((source) => <button key={sourceChapterKey(source)} onClick={() => onOpenSource(source)}><Icon name="file" size={14} /><span><strong>{sourceBookTitle(source)} · {source.contentUnitId || source.title}</strong><small>{source.location}</small></span><Icon name="chevron-right" size={14} /></button>)}</div>}</div></div>)}{busy && <div className="message assistant"><span className="message-avatar">✦</span><div className="typing-state">正在查找相关资料…</div></div>}{error && <div className="inline-error" role="alert"><Icon name="info" size={16} /><span>{error}</span><button onClick={onAsk}>重新发送</button></div>}</div><div className="chat-composer"><textarea value={value} onChange={(event) => onChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); onAsk(); } }} placeholder="继续提问（Shift + Enter 换行）" rows={2} /><button className="send-button" onClick={onAsk} disabled={busy} aria-label="发送问题"><Icon name="send" size={17} /></button></div><div className="suggestion-row"><button onClick={() => onChange("这个概念如何举例？")}>这个概念如何举例？</button><button onClick={() => onChange("需要哪些前置知识？")}>需要哪些前置知识？</button></div></article><aside className="card source-card"><div className="card-heading"><span>来源详情</span><Icon name="info" size={17} /></div>{uniqueSources.length === 0 ? <div className="source-empty">提问后显示检索到的资料来源</div> : uniqueSources.map((source) => <button className="source-block" key={sourceChapterKey(source)} onClick={() => onOpenSource(source)}><Icon name="file" size={15} /><strong>{sourceBookTitle(source)} · {source.contentUnitId || source.title}</strong></button>)}{uniqueSources.length > 0 && <button className="secondary-button full" onClick={onAddPlan}>加入学习计划 <Icon name="plus" size={15} /></button>}</aside></section></div>;
+  // 清空会写入上下文重置标记；回答生成期间禁止清空，避免在途回答越过重置边界。
+  return <div className="page-stack"><PageHeader eyebrow="资料驱动 · 保留引用" title="资料问答" description="围绕当前学习内容和学习目标提问，回答会保留资料出处。" action={<button className="outline-button" onClick={onNew} title="清空当前对话，重新开始一轮提问">清空对话 <Icon name="trash" size={15} /></button>} /><section className="qa-layout"><article className="card conversation-card"><div className="conversation-head"><div><span className="section-label">当前范围</span><strong>{book.title} · {book.subtitle}</strong></div><span className="status-pill blue">已绑定知识点</span></div><div className="qa-mode-bar"><div className="qa-mode-switch" aria-label="回答方式"><button className={answerMode === "direct" ? "active" : ""} onClick={() => onAnswerModeChange("direct")} disabled={busy}>直接回答</button><button className={answerMode === "socratic" ? "active" : ""} onClick={() => onAnswerModeChange("socratic")} disabled={busy}>引导作答</button></div><span>{answerMode === "socratic" ? "每轮只给一个问题或提示，不直接泄露完整答案" : "直接根据教材给出有出处的回答"}</span>{answerMode === "socratic" && hasActiveLearningTask && <button className="qa-finish-task" onClick={onFinishSocraticTask} disabled={busy}>结束本轮引导</button>}</div><div className="message-list">{messages.map((message, index) => <div className={`message ${message.role}`} key={`${message.role}-${index}`}><span className="message-avatar">{message.role === "assistant" ? "✦" : "我"}</span><div>{message.fromGeneralModel && <div className="general-model-tag"><Icon name="alert" size={13} />此回答来自通用模型，未经教材验证，不计入学习记录</div>}{message.role === "assistant" && message.answerMode === "socratic" && <div className="socratic-tag">引导作答{message.socraticCompleted ? " · 已完成" : ""}</div>}<p className={message.fromGeneralModel ? "general-model-answer" : undefined}>{message.text}</p>{message.role === "assistant" && message.refused && message.answerMode !== "socratic" && <div className="qa-fallback"><span>资料里没有找到能支持这个问题的依据。</span><button type="button" onClick={() => onAskGeneral(message.question ?? "")} disabled={!message.question}>用通用模型回答（无教材引用）</button><InlineResources knowledgePointIds={relatedKnowledgePointIds} title="或者看看这些资料" /></div>}{message.role === "assistant" && !message.refused && !message.fromGeneralModel && <div className="citation-row">{mergeSourcesByChapter(message.citations ?? sources).map((source) => <button key={sourceChapterKey(source)} onClick={() => onOpenSource(source)}><Icon name="file" size={14} /><span><strong>{sourceBookTitle(source)} · {source.contentUnitId || source.title}</strong><small>{source.location}</small></span><Icon name="chevron-right" size={14} /></button>)}</div>}</div></div>)}{busy && <div className="message assistant"><span className="message-avatar">✦</span><div className="typing-state">{answerMode === "socratic" ? "正在判断下一步引导…" : "正在查找相关资料…"}</div></div>}{error && <div className="inline-error" role="alert"><Icon name="info" size={16} /><span>{error}</span><button onClick={onAsk}>重新发送</button></div>}</div><div className="chat-composer"><textarea value={value} onChange={(event) => onChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); onAsk(); } }} placeholder={answerMode === "socratic" ? (hasActiveLearningTask ? "回答导师的问题（Shift + Enter 换行）" : "输入一道题，开始引导作答") : "继续提问（Shift + Enter 换行）"} rows={2} /><button className="send-button" onClick={onAsk} disabled={busy} aria-label="发送问题"><Icon name="send" size={17} /></button></div><div className="suggestion-row">{answerMode === "socratic" ? <><button onClick={() => onChange("我不太确定，请给我一个提示")}>给我一个提示</button><button onClick={() => onChange("我认为可以先从核心概念开始分析")}>我先说说思路</button></> : <><button onClick={() => onChange("这个概念如何举例？")}>这个概念如何举例？</button><button onClick={() => onChange("需要哪些前置知识？")}>需要哪些前置知识？</button></>}</div></article><aside className="card source-card"><div className="card-heading"><span>来源详情</span><Icon name="info" size={17} /></div>{uniqueSources.length === 0 ? <div className="source-empty">提问后显示检索到的资料来源</div> : uniqueSources.map((source) => <button className="source-block" key={sourceChapterKey(source)} onClick={() => onOpenSource(source)}><Icon name="file" size={15} /><strong>{sourceBookTitle(source)} · {source.contentUnitId || source.title}</strong></button>)}{uniqueSources.length > 0 && <button className="secondary-button full" onClick={onAddPlan}>加入学习计划 <Icon name="plus" size={15} /></button>}</aside></section></div>;
 }
 
 function TaskRow({ task, onOpen }: { task: LearningTask; onOpen: () => void }) {

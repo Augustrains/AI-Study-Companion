@@ -91,15 +91,43 @@ export type TodayLearningResponse = {
   taskSummary: { completed: number; total: number };
   continueLearning: { taskId: string; title: string; type: string; minutes: number; status: string; expectedCompletionDate: string; description: string; reason: string } | null;
 };
-export type QaConversation = { conversationId: string; bookId: BookId; userId: string; createdAt: string; status: string };
+/**
+ * 后端暂时保留 conversationId 作为接口兼容令牌；问答历史实际按 userId + bookId 管理。
+ * resetContext 只在用户明确点击“清空对话”时发送。
+ */
+export type QaAnswerMode = "direct" | "socratic";
+export type QaContextResult = {
+  conversationId: string;
+  bookId: BookId;
+  userId: string;
+  createdAt: string;
+  status: string;
+  answerMode?: QaAnswerMode;
+  learningTaskId?: string | null;
+  socraticState?: string | null;
+};
 /**
  * allowGeneralFallback：资料检索不足以回答时，是否允许改用通用模型作答。
  * 默认 false —— 必须由用户在界面上显式确认后才置为 true，避免无出处的答案被当成教材依据。
  * 【后端接入清单】POST /rag/conversations/{id}/messages 需接收该字段，
  * 并在降级作答时返回 answeredByGeneralModel=true、citations=[]。
  */
-export type QaQuestionPayload = { bookId: BookId; question: string; conversationId?: string; sources?: Source[]; allowGeneralFallback?: boolean };
-export type QaResult = { answer: string; refused: boolean; citations: Source[]; relatedKnowledgePoints?: string[]; recommendedAction?: string; conversationId?: string; requestId?: string; /** 后端确认本次回答来自通用模型（无教材出处） */ answeredByGeneralModel?: boolean };
+export type QaQuestionPayload = { bookId: BookId; question: string; conversationId?: string; sources?: Source[]; allowGeneralFallback?: boolean; answerMode?: QaAnswerMode; learningTaskId?: string | null };
+export type QaResult = {
+  answer: string;
+  refused: boolean;
+  citations: Source[];
+  relatedKnowledgePoints?: string[];
+  recommendedAction?: string;
+  conversationId?: string;
+  requestId?: string;
+  answeredByGeneralModel?: boolean;
+  answerMode?: QaAnswerMode;
+  learningTaskId?: string | null;
+  socraticState?: string | null;
+  responseQuality?: string | null;
+  socraticCompleted?: boolean;
+};
 export type MaterialLearningPlanPayload = { bookId: BookId; title: string; goal: string; description: string; minutes: number; expectedCompletionDate: string; resources: Source[] };
 export type LearningActivity = {
   id: string;
@@ -211,9 +239,13 @@ export const mockApi = {
     const goal = mockGoals.get(bookId);
     return goal ? { exists: true, goal } : { exists: false };
   },
-  async createConversation(bookId: BookId): Promise<QaConversation> {
+  async initializeQaContext(bookId: BookId, _resetContext = false): Promise<QaContextResult> {
     await wait(260);
     return { conversationId: `mock-qa-${Date.now()}`, bookId, userId: getCurrentUserId(), createdAt: new Date().toISOString(), status: "active" };
+  },
+  async finishQaLearningTask(_bookId: BookId, _learningTaskId: string): Promise<{ completed: boolean }> {
+    await wait(120);
+    return { completed: true };
   },
   async startDiagnostic(bookId: BookId): Promise<DiagnosticStartResult> {
     await wait();
@@ -317,7 +349,17 @@ export const mockApi = {
       }
       return { answer: "（通用模型回答）这个问题超出了当前教材范围，以下内容来自通用知识，未经教材核对，请谨慎参考。", refused: false, citations: [], answeredByGeneralModel: true };
     }
-    return { answer: "这是一个很好的追问。建议先从定义、输入条件和输出结果三个角度拆解，再结合引用资料核对关键概念。", refused: false, citations: payload.sources };
+    if (payload.answerMode === "socratic") {
+      return {
+        answer: "我们先不急着看完整答案。你认为这道题首先需要明确的核心概念是什么？",
+        refused: false,
+        citations: payload.sources,
+        answerMode: "socratic",
+        learningTaskId: payload.learningTaskId ?? `task-${Date.now()}`,
+        socraticState: "probe",
+      };
+    }
+    return { answer: "这是一个很好的追问。建议先从定义、输入条件和输出结果三个角度拆解，再结合引用资料核对关键概念。", refused: false, citations: payload.sources, answerMode: "direct" };
   },
   async getLearnerProfile(userId: string, learningDomain: string): Promise<LearnerProfileResult> {
     await wait(260);
@@ -386,7 +428,14 @@ export const realApi = {
       return { exists: false };
     }
   },
-  createConversation: (bookId: BookId) => request<QaConversation>("/rag/conversations", { method: "POST", body: JSON.stringify({ bookId, userId: getCurrentUserId() }) }),
+  initializeQaContext: (bookId: BookId, resetContext = false) => request<QaContextResult>("/rag/conversations", {
+    method: "POST",
+    body: JSON.stringify({ bookId, userId: getCurrentUserId(), resetContext }),
+  }),
+  finishQaLearningTask: (bookId: BookId, learningTaskId: string) => request<{ completed: boolean }>(`/rag/learning-tasks/${encodeURIComponent(learningTaskId)}/finish`, {
+    method: "POST",
+    body: JSON.stringify({ bookId, userId: getCurrentUserId() }),
+  }),
   // 诊断只在 start 这一步认人：后端把 userId 存进工作流状态，
   // 后续 answers / finish / 校准都按 diagnosticId 找回同一个用户，不需要再传。
   startDiagnostic: (bookId: BookId, learningGoal?: string) => request<DiagnosticStartResult>("/diagnostics/start", { method: "POST", body: JSON.stringify({ bookId, learningGoal, userId: getCurrentUserId() }) }),
@@ -407,7 +456,7 @@ export const realApi = {
     if (params?.category && params.category !== "all") query.set("category", params.category);
     return request<LearningActivityList>(`/learning-records?${query.toString()}`);
   },
-  askQuestion: (payload: QaQuestionPayload) => request<QaResult>(`/rag/conversations/${encodeURIComponent(payload.conversationId ?? "")}/messages`, { method: "POST", body: JSON.stringify({ bookId: payload.bookId, question: payload.question, userId: getCurrentUserId(), allowGeneralFallback: payload.allowGeneralFallback ?? false }) }),
+  askQuestion: (payload: QaQuestionPayload) => request<QaResult>(`/rag/conversations/${encodeURIComponent(payload.conversationId ?? "")}/messages`, { method: "POST", body: JSON.stringify({ bookId: payload.bookId, question: payload.question, userId: getCurrentUserId(), allowGeneralFallback: payload.allowGeneralFallback ?? false, answerMode: payload.answerMode ?? "direct", learningTaskId: payload.learningTaskId ?? null }) }),
   getLearnerProfile: (userId: string, learningDomain: string) => request<LearnerProfileResult>(`/learner-profile?user_id=${encodeURIComponent(userId)}&learning_domain=${encodeURIComponent(learningDomain)}`),
   getKnowledgePoints: (learningDomain: string) => request<KnowledgePointResult>(`/learner-profile/knowledge-points?learning_domain=${encodeURIComponent(learningDomain)}`),
   saveLearnerProfile: async (payload: LearnerProfilePayload) => {

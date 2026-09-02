@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from pathlib import Path
 
+from sqlalchemy.engine import Engine
+
 from modules.common import api as common_api
 from modules.common.database import create_mysql_engine
 from modules.auth.module import AuthModule
@@ -17,6 +19,7 @@ from modules.today_learning.module import TodayLearningModule
 from modules.memory.module import MemoryModule
 from modules.memory.repository import JsonMemoryRepository
 from modules.material_qa.agent import MaterialQaAgent
+from modules.material_qa.repository import MysqlMaterialQaMessageStore
 from modules.material_qa.services import QdrantMaterialRetriever
 from modules.material_qa.workflow import MaterialQaWorkflow
 from sdk.llm_client import DeepSeekLLMClient
@@ -35,6 +38,7 @@ class ApiDependencies:
     learner_goals: LearnerGoalModule
     # 认证：同上，启动时会确保体验账号存在。
     auth: AuthModule
+    database_engine: Engine
 
     def start(self) -> None:
         """预热应用级资源，避免首个请求承担模型加载成本。"""
@@ -45,10 +49,12 @@ class ApiDependencies:
         """关闭应用级资源，尤其是 Qdrant 本地存储客户端。"""
 
         self.material_qa.close()
+        self.database_engine.dispose()
 
 
 def build_api_dependencies(settings: common_api.config.Settings | None = None) -> ApiDependencies:
     settings = settings or common_api.config.Settings.from_env()
+    database_engine = create_mysql_engine(settings)
     profile_reader = common_api.json_storage.JsonContentReader(
         settings.profile_path
     )
@@ -109,14 +115,16 @@ def build_api_dependencies(settings: common_api.config.Settings | None = None) -
             agent=MaterialQaAgent(DeepSeekLLMClient.from_env()),
             activity_recorder=learning_record_module,
             retriever=material_qa_retriever,
+            message_store=MysqlMaterialQaMessageStore(database_engine),
         ),
         learning_record=learning_record_module,
         today_learning=today_learning_module,
         learner_goals=learner_goal_module,
         auth=AuthModule(
-            store=MysqlAccountStore(create_mysql_engine(settings)),
+            store=MysqlAccountStore(database_engine),
             seed_demo_account=False,
         ),
+        database_engine=database_engine,
     )
 
 
