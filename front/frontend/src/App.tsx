@@ -6,6 +6,7 @@ import { GoalsSetupView } from "./components/GoalsSetupView";
 import { SettingsView } from "./components/SettingsView";
 import { InlineResources, LearningResourcesView } from "./components/LearningResources";
 import { HelpCenterView } from "./components/HelpCenter";
+import { CommunityView } from "./components/CommunityView";
 import { auth, getSession, type AuthUser } from "./services/session";
 import { api, type ApiError, type BookCatalogItem, type DiagnosticResult, type LearningActivity, type LearningPlanResult, type PlanTimeBudget, type TodayLearningResponse } from "./services/api";
 import {
@@ -70,6 +71,7 @@ const navigation: Array<{ key: NavKey; label: string; icon: IconName }> = [
   { key: "records", label: "学习记录", icon: "chart" },
   { key: "qa", label: "资料问答", icon: "chat" },
   { key: "resources", label: "学习资源", icon: "spark" },
+  { key: "community", label: "学习社区", icon: "users" },
 ];
 
 const statusLabels: Record<TaskStatus, string> = {
@@ -641,7 +643,7 @@ function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand-lockup"><div className="brand-mark"><Icon name="book-open" size={22} /></div><div><strong>自适应伴学智能体</strong><span>学习闭环</span></div></div>
-        <nav className="main-nav" aria-label="主导航">{navigation.map((item) => <button className={`nav-item ${activeNav === item.key ? "active" : ""}`} key={item.key} onClick={() => goTo(item.key)}><Icon name={item.icon} size={19} /><span>{item.label}</span></button>)}</nav>
+        <nav className="main-nav" aria-label="主导航">{navigation.map((item) => <button className={`nav-item ${activeNav === item.key ? "active" : ""}`} key={item.key} aria-label={item.label} title={item.label} onClick={() => goTo(item.key)}><Icon name={item.icon} size={19} /><span>{item.label}</span></button>)}</nav>
         <div className="sidebar-bottom"><button className={`nav-item ${activeNav === "goals" ? "active" : ""}`} onClick={() => setActiveNav("goals")}><Icon name="target" size={19} /><span>选书与目标</span></button><button className={`nav-item ${activeNav === "settings" ? "active" : ""}`} onClick={() => setActiveNav("settings")}><Icon name="settings" size={19} /><span>设置</span></button><button className={`nav-item ${activeNav === "help" ? "active" : ""}`} onClick={() => setActiveNav("help")}><Icon name="help" size={19} /><span>帮助</span></button>
           <div className="sidebar-user">
             <button className="sidebar-user-main" onClick={() => setActiveNav("settings")} title="账户设置">
@@ -666,6 +668,7 @@ function App() {
         {activeNav === "settings" && <SettingsView user={user} onUserUpdated={setUser} onLogout={handleLogout} />}
         {activeNav === "resources" && <LearningResourcesView knowledgePointNames={knowledgePointNames} />}
         {activeNav === "help" && <HelpCenterView onNavigate={goTo} />}
+        {activeNav === "community" && <CommunityView key={user.userId} userId={user.userId} nickname={user.nickname} course={currentBook.shortTitle} />}
         {activeNav === "qa" && <QaView book={currentBook} sources={qaSources} messages={qaMessages} value={qaInput} busy={qaBusy} error={qaError} onChange={setQaInput} onAsk={askQuestion} onNew={() => void initializeQaConversation(bookId)} onOpenSource={openSource} onAddPlan={openMaterialPlanEditor} onAskGeneral={askWithGeneralModel} relatedKnowledgePointIds={(todayLearning?.knowledgeGraph.nodes ?? []).filter((node) => node.status === "weak").map((node) => node.id)} />}
       </main>
 
