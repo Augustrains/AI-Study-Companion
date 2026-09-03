@@ -52,8 +52,8 @@ function PublishForm({ course, onPublish }: { course: string; onPublish: (catego
     </div>
     <label>标题<input autoFocus required maxLength={96} placeholder="给你的分享起个标题" value={title} onChange={(event) => setTitle(event.target.value)} /></label>
     <label>分享内容<textarea required maxLength={1200} rows={6} placeholder="说说你的学习发现，或介绍你想找的学习搭子…" value={body} onChange={(event) => setBody(event.target.value)} /></label>
-    <div className="community-form-hint"><span>仅保存到此浏览器，不会公开发布。</span><span>{body.length} / 1200</span></div>
-    <button type="submit" className="primary-button" disabled={!title.trim() || !body.trim()}><Icon name="send" size={16} />发布到示例社区</button>
+    <div className="community-form-hint"><span>{body.length} / 1200</span></div>
+    <button type="submit" className="primary-button" disabled={!title.trim() || !body.trim()}><Icon name="send" size={16} />发布动态</button>
   </form>;
 }
 
@@ -86,7 +86,7 @@ export function CommunityView({ userId, nickname, course }: { userId: string; ni
   };
   const publish = (category: CommunityCategory, postCourse: string, title: string, body: string) => {
     dispatch({ type: "post", post: { id: `local-${crypto.randomUUID()}`, authorId: userId, authorName: nickname.slice(0, 100) || "学习者", category, course: postCourse.slice(0, 80), title, body, createdAt: new Date().toISOString(), likes: 0 } });
-    setFilter("全部"); setQuery(""); setDialog(null); setNotice("动态已添加到示例社区，仅此浏览器可见");
+    setFilter("全部"); setQuery(""); setDialog(null); setNotice("动态已发布");
   };
   const comment = (event: FormEvent, post: CommunityPost) => {
     event.preventDefault();
@@ -94,10 +94,10 @@ export function CommunityView({ userId, nickname, course }: { userId: string; ni
     if (!body) return;
     dispatch({ type: "comment", comment: { id: `comment-${crypto.randomUUID()}`, postId: post.id, authorName: nickname.slice(0, 100) || "学习者", body } });
     setDrafts((current) => ({ ...current, [post.id]: "" }));
-    setNotice("评论已添加，仅此浏览器可见");
+    setNotice("评论已添加");
   };
   return <section className="community-page" aria-labelledby="community-heading">
-    <div className="page-header community-page-header"><div><span className="eyebrow">LEARN TOGETHER</span><h1 id="community-heading">学习社区</h1><p>分享你的发现，遇见同路的学习伙伴。</p></div><span className="community-demo-tag"><span />示例社区</span></div>
+    <div className="page-header community-page-header"><div><span className="eyebrow">LEARN TOGETHER</span><h1 id="community-heading">学习社区</h1><p>分享你的发现，遇见同路的学习伙伴。</p></div></div>
 
     <div className="community-hero">
       <div className="community-hero-copy"><span className="community-kicker"><Icon name="spark" size={15} />让学习发生连接</span><h2>一个人的探索，<br />一群人的灵感。</h2><p>从一次提问到一份笔记，让每一个小进步，都有人回应。</p><button className="community-hero-button" onClick={() => setDialog("publish")}><Icon name="plus" size={17} />分享我的学习<Icon name="arrow-right" size={17} /></button></div>
@@ -107,7 +107,8 @@ export function CommunityView({ userId, nickname, course }: { userId: string; ni
     <div className="community-layout">
       <div className="community-feed">
         <div className="community-composer"><Avatar name={nickname || "我"} /><button onClick={() => setDialog("publish")}>今天有什么新的学习发现？</button><button className="community-compose-icon" aria-label="发布动态" onClick={() => setDialog("publish")}><Icon name="plus" /></button></div>
-        <div className="community-feed-tools"><div className="community-filters" role="group" aria-label="动态分类筛选">{filters.map((item) => <button key={item} aria-pressed={filter === item} className={filter === item ? "active" : ""} onClick={() => setFilter(item)}>{item}</button>)}</div><label className="community-search"><Icon name="search" size={16} /><input aria-label="搜索社区动态" placeholder="搜索话题、课程或伙伴" value={query} maxLength={100} onChange={(event) => setQuery(event.target.value)} /></label></div>
+        <div className="community-filters" role="group" aria-label="动态分类筛选">{filters.map((item) => <button key={item} aria-pressed={filter === item} className={filter === item ? "active" : ""} onClick={() => setFilter(item)}>{item}</button>)}</div>
+        <label className="community-search"><Icon name="search" size={16} /><input aria-label="搜索社区动态" placeholder="搜索话题、课程或伙伴" value={query} maxLength={100} onChange={(event) => setQuery(event.target.value)} /></label>
         <p className="community-results" role="status">{query.trim() ? `搜索结果 · ${posts.length} 条动态` : filter === "我的收藏" ? `我的收藏 · ${posts.length} 条动态` : "每一种理解，都值得交流"}</p>
         <div className="community-posts">
           {posts.map((post) => {
@@ -135,15 +136,15 @@ export function CommunityView({ userId, nickname, course }: { userId: string; ni
 
       <aside className="community-rail" aria-label="学习伙伴与小组">
         <section className="community-side-card"><div className="community-side-heading"><h2>遇见学习搭子</h2><Icon name="users" size={19} /></div><p className="community-side-description">从相近的学习兴趣开始</p>{suggestions.map((person) => <div key={person.id} className="community-person"><button className="community-person-profile" aria-label={`查看${person.name}的资料`} onClick={() => setDialog(person)}><Avatar name={person.name} color={person.color} /><span><strong>{person.name}</strong><small>{person.goal}</small></span></button><div className="community-person-tags">{person.tags.map((tag) => <span key={tag}>{tag}</span>)}</div><div className="community-person-bottom"><span>{person.course}</span><button aria-label={`${state.followedIds.includes(person.id) ? "取消关注" : "关注"}${person.name}`} aria-pressed={state.followedIds.includes(person.id)} className={state.followedIds.includes(person.id) ? "following" : ""} onClick={() => toggleFollow(person)}><Icon name={state.followedIds.includes(person.id) ? "check" : "plus"} size={13} />{state.followedIds.includes(person.id) ? "已关注" : "关注"}</button></div></div>)}</section>
-        <section className="community-side-card"><div className="community-side-heading"><h2>找到你的学习圈</h2><Icon name="spark" size={19} /></div><p className="community-side-description">同一个主题，不一样的视角</p>{communityGroups.map((group) => <div className="community-group" key={group.id}><span className={`community-group-icon community-tone-${group.color}`}><Icon name={group.icon} size={18} /></span><div><strong>{group.name}</strong><small>{group.detail}</small><button aria-label={`${state.joinedIds.includes(group.id) ? "退出" : "加入"}${group.name}`} aria-pressed={state.joinedIds.includes(group.id)} onClick={() => { dispatch({ type: "toggle", field: "joinedIds", id: group.id }); setNotice(state.joinedIds.includes(group.id) ? `已退出${group.name}` : `已加入${group.name}（本地展示）`); }}>{state.joinedIds.includes(group.id) ? "已加入 · 点击退出" : "加入小组 →"}</button></div></div>)}</section>
+        <section className="community-side-card"><div className="community-side-heading"><h2>找到你的学习圈</h2><Icon name="spark" size={19} /></div><p className="community-side-description">同一个主题，不一样的视角</p>{communityGroups.map((group) => <div className="community-group" key={group.id}><span className={`community-group-icon community-tone-${group.color}`}><Icon name={group.icon} size={18} /></span><div><strong>{group.name}</strong><small>{group.detail}</small><button aria-label={`${state.joinedIds.includes(group.id) ? "退出" : "加入"}${group.name}`} aria-pressed={state.joinedIds.includes(group.id)} onClick={() => { dispatch({ type: "toggle", field: "joinedIds", id: group.id }); setNotice(state.joinedIds.includes(group.id) ? `已退出${group.name}` : `已加入${group.name}`); }}>{state.joinedIds.includes(group.id) ? "已加入 · 点击退出" : "加入小组 →"}</button></div></div>)}</section>
         <section className="community-guideline"><Icon name="shield" size={20} /><div><h2>让交流有温度</h2><p>分享思路，尊重不同理解。<br />多一点启发，少一点直接代答。</p></div></section>
-        <div className="community-demo-info"><p>示例人物与动态用于交互展示。发帖、评论和关注仅保存在此浏览器，不会发送给其他用户。</p>{!persistent && <p role="alert">浏览器存储不可用，操作暂存在当前会话，刷新后可能丢失。</p>}<button onClick={() => setDialog("reset")}>恢复初始示例</button></div>
+        <div className="community-data-tools">{!persistent && <p role="alert">浏览器存储不可用，操作暂存在当前会话，刷新后可能丢失。</p>}<button onClick={() => setDialog("reset")}>重置社区</button></div>
       </aside>
     </div>
     <div className={`community-notice ${notice ? "visible" : ""}`} role="status" aria-live="polite">{notice && <><Icon name="check-circle" size={18} />{notice}</>}</div>
 
     {dialog === "publish" && <CommunityDialog title="分享你的学习" onClose={() => setDialog(null)}><PublishForm course={course} onPublish={publish} /></CommunityDialog>}
-    {dialog === "reset" && <CommunityDialog title="恢复初始示例？" onClose={() => setDialog(null)}><p className="community-reset-copy">这将清除当前账号在此浏览器的社区发帖、评论、点赞、收藏、关注和加入记录。学习计划、画像及其他账号的数据不会改变。</p><div className="community-dialog-actions"><button className="secondary-button" onClick={() => setDialog(null)}>取消</button><button className="primary-button" onClick={() => { dispatch({ type: "reset" }); setExpanded([]); setDrafts({}); setQuery(""); setFilter("全部"); setDialog(null); setNotice("已恢复初始示例"); }}>确认恢复</button></div></CommunityDialog>}
-    {dialog && typeof dialog === "object" && <CommunityDialog title="学习伙伴" onClose={() => setDialog(null)}><div className="community-profile-detail"><Avatar name={dialog.name} color={dialog.color} large /><h3>{dialog.name}</h3><p>{dialog.role}</p><span className="community-category">{dialog.course}</span><p className="community-profile-bio">{dialog.bio}</p><dl><div><dt>学习目标</dt><dd>{dialog.goal}</dd></div><div><dt>学习时间</dt><dd>{dialog.time}</dd></div><div><dt>交流偏好</dt><dd>{dialog.tags.join(" · ")}</dd></div></dl><button className="primary-button" aria-pressed={state.followedIds.includes(dialog.id)} onClick={() => toggleFollow(dialog)}><Icon name={state.followedIds.includes(dialog.id) ? "check" : "plus"} size={16} />{state.followedIds.includes(dialog.id) ? "已关注 · 取消关注" : "关注这位伙伴"}</button><small>示例资料，关注不会向真实用户发送通知。</small></div></CommunityDialog>}
+    {dialog === "reset" && <CommunityDialog title="重置社区？" onClose={() => setDialog(null)}><p className="community-reset-copy">这将清除当前账号在此浏览器的社区发帖、评论、点赞、收藏、关注和加入记录。学习计划、画像及其他账号的数据不会改变。</p><div className="community-dialog-actions"><button className="secondary-button" onClick={() => setDialog(null)}>取消</button><button className="primary-button" onClick={() => { dispatch({ type: "reset" }); setExpanded([]); setDrafts({}); setQuery(""); setFilter("全部"); setDialog(null); setNotice("社区已重置"); }}>确认重置</button></div></CommunityDialog>}
+    {dialog && typeof dialog === "object" && <CommunityDialog title="学习伙伴" onClose={() => setDialog(null)}><div className="community-profile-detail"><Avatar name={dialog.name} color={dialog.color} large /><h3>{dialog.name}</h3><p>{dialog.role}</p><span className="community-category">{dialog.course}</span><p className="community-profile-bio">{dialog.bio}</p><dl><div><dt>学习目标</dt><dd>{dialog.goal}</dd></div><div><dt>学习时间</dt><dd>{dialog.time}</dd></div><div><dt>交流偏好</dt><dd>{dialog.tags.join(" · ")}</dd></div></dl><button className="primary-button" aria-pressed={state.followedIds.includes(dialog.id)} onClick={() => toggleFollow(dialog)}><Icon name={state.followedIds.includes(dialog.id) ? "check" : "plus"} size={16} />{state.followedIds.includes(dialog.id) ? "已关注 · 取消关注" : "关注这位伙伴"}</button></div></CommunityDialog>}
   </section>;
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Icon, type IconName } from "./components/Icon";
 import { LearnerProfileView } from "./components/LearnerProfileView";
 import { AuthView } from "./components/AuthView";
@@ -102,6 +102,7 @@ function App() {
   const [bookCatalog, setBookCatalog] = useState<BookCatalogItem[]>([]);
   const [knowledgePointNames, setKnowledgePointNames] = useState<Record<string, string>>({});
   const [activeNav, setActiveNav] = useState<NavKey>("today");
+  const pageContentRef = useRef<HTMLDivElement>(null);
   const [bookId, setBookId] = useState<BookId>(books[0].id);
   const [toast, setToast] = useState<Toast>(null);
   const [modal, setModal] = useState<ModalState | null>(null);
@@ -110,6 +111,11 @@ function App() {
   const [todayLearning, setTodayLearning] = useState<TodayLearningResponse | null>(null);
   const [planTab, setPlanTab] = useState<"overview" | "knowledge">("overview");
   const [goalLevel, setGoalLevel] = useState("能够独立完成基础练习");
+
+  // Each page starts at the top without remounting its forms or resetting learning state.
+  useEffect(() => {
+    pageContentRef.current?.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, [activeNav, bookId]);
 
   const [diagnosticStage, setDiagnosticStage] = useState<"question" | "result">("question");
   const [diagnosticIndex, setDiagnosticIndex] = useState(0);
@@ -658,7 +664,9 @@ function App() {
       </aside>
 
       <main className="main-content">
+        <div className="page-content" ref={pageContentRef} role="region" aria-label="页面内容" tabIndex={0}>
         <header className="topbar"><div className="mobile-brand"><div className="brand-mark"><Icon name="book-open" size={20} /></div></div><div className="topbar-context"><span className="context-label">当前学习内容</span><label className="book-select"><Icon name="book" size={18} /><select value={bookId} onChange={(event) => resetBookState(event.target.value as BookId)} aria-label="选择当前学习内容">{bookOptions.map((book) => <option key={book.id} value={book.id}>{book.title}</option>)}</select><Icon name="chevron-down" size={15} /></label></div></header>
+        <div className="page-body">
         {activeNav === "today" && <TodayView book={currentBook} content={content} tasks={currentTasks} dashboard={todayDashboard} goTo={goTo} startDiagnostic={startDiagnostic} onOpenTask={openTask} onOpenKnowledge={openKnowledgeDetail} onOpenRecords={() => goTo("records")} />}
         {activeNav === "profile" && <LearnerProfileView bookId={bookId} />}
         {activeNav === "diagnostic" && <DiagnosticView questions={diagnosticQuestions} index={diagnosticIndex} answers={diagnosticAnswers} skippedQuestions={skippedQuestions} paused={diagnosticPaused} busy={diagnosticBusy} stage={diagnosticStage} result={diagnosticResult} calibration={calibration} calibrationReason={calibrationReason} setAnswer={(id) => currentQuestion && setDiagnosticAnswers((answers) => ({ ...answers, [currentQuestion.id]: id }))} onPrevious={() => setDiagnosticIndex((index) => Math.max(0, index - 1))} onSubmit={submitDiagnostic} onSkip={skipDiagnostic} onPause={() => setDiagnosticPaused(true)} onResume={resumeDiagnostic} onCalibration={setCalibration} onReason={setCalibrationReason} onEvidence={openEvidence} onCalibrationSubmit={submitCalibration} />}
@@ -670,6 +678,8 @@ function App() {
         {activeNav === "help" && <HelpCenterView onNavigate={goTo} />}
         {activeNav === "community" && <CommunityView key={user.userId} userId={user.userId} nickname={user.nickname} course={currentBook.shortTitle} />}
         {activeNav === "qa" && <QaView book={currentBook} sources={qaSources} messages={qaMessages} value={qaInput} busy={qaBusy} error={qaError} onChange={setQaInput} onAsk={askQuestion} onNew={() => void initializeQaConversation(bookId)} onOpenSource={openSource} onAddPlan={openMaterialPlanEditor} onAskGeneral={askWithGeneralModel} relatedKnowledgePointIds={(todayLearning?.knowledgeGraph.nodes ?? []).filter((node) => node.status === "weak").map((node) => node.id)} />}
+        </div>
+        </div>
       </main>
 
       {toast && <div className="toast" role="status"><div className="toast-icon"><Icon name="check" size={17} /></div><div><strong>{toast.title}</strong><span>{toast.message}</span></div></div>}
