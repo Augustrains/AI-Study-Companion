@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -10,8 +12,8 @@ class SaveLearnerGoalRequest(BaseModel):
 
     book_id: str = Field(alias="bookId", min_length=1)
     target_level: str = Field(alias="targetLevel", min_length=1, max_length=60)
-    # 上限 80 与 module.MAX_WEEKLY_HOURS 一致；下限 1 是因为 0 小时的目标没有意义。
-    weekly_hours: float = Field(alias="weeklyHours", ge=1, le=80)
+    daily_minutes: int = Field(alias="dailyMinutes", ge=1, le=1440)
+    target_date: date | None = Field(default=None, alias="targetDate")
     user_id: str = Field(alias="userId", min_length=1)
 
 
@@ -22,7 +24,8 @@ class LearnerGoalResponse(BaseModel):
     user_id: str = Field(alias="userId")
     book_id: str = Field(alias="bookId")
     target_level: str = Field(alias="targetLevel")
-    weekly_hours: float = Field(alias="weeklyHours")
+    daily_minutes: int = Field(alias="dailyMinutes")
+    target_date: str | None = Field(default=None, alias="targetDate")
     updated_at: str = Field(alias="updatedAt")
     # 保存目标后是否顺带重排了在途计划的任务日期（只改日期，无损）。
     rescheduled: bool = False

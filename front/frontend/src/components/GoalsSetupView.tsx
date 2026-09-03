@@ -17,13 +17,26 @@ const TARGET_LEVELS = [
 
 const errorMessage = (error: unknown) => (error as { message?: string })?.message ?? "操作失败，请稍后重试。";
 
+const dateInputValue = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const defaultTargetDate = () => {
+  const date = new Date();
+  date.setDate(date.getDate() + 30);
+  return dateInputValue(date);
+};
+
 export function GoalsSetupView({
   initialBookId,
   onSaved,
   onSkip,
 }: {
   initialBookId?: string;
-  onSaved: (result: { bookId: string; targetLevel: string; weeklyHours: number; rescheduled?: boolean; estimatedDays?: number | null; planRefreshSuggested?: boolean }) => void;
+  onSaved: (result: { bookId: string; targetLevel: string; dailyMinutes: number; targetDate: string; rescheduled?: boolean; estimatedDays?: number | null; planRefreshSuggested?: boolean }) => void;
   onSkip: () => void;
 }) {
   const [catalog, setCatalog] = useState<BookCatalogItem[]>([]);
@@ -32,7 +45,8 @@ export function GoalsSetupView({
 
   const [bookId, setBookId] = useState<string>(initialBookId ?? "");
   const [targetLevel, setTargetLevel] = useState(TARGET_LEVELS[1]);
-  const [weeklyHours, setWeeklyHours] = useState(5);
+  const [dailyMinutes, setDailyMinutes] = useState(30);
+  const [targetDate, setTargetDate] = useState(defaultTargetDate);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -66,7 +80,8 @@ export function GoalsSetupView({
     void api.getLearnerGoal(bookId).then((result) => {
       if (!active || !result.exists || !result.goal) return;
       setTargetLevel(result.goal.targetLevel);
-      setWeeklyHours(result.goal.weeklyHours);
+      setDailyMinutes(result.goal.dailyMinutes);
+      setTargetDate(result.goal.targetDate ?? defaultTargetDate());
     });
     return () => { active = false; };
   }, [bookId]);
@@ -76,15 +91,20 @@ export function GoalsSetupView({
       setSaveError("请选择一本书籍。");
       return;
     }
+    if (!targetDate) {
+      setSaveError("请选择期望完成日期。");
+      return;
+    }
     setSaving(true);
     setSaveError(null);
     try {
-      const saved = await api.saveLearnerGoal({ bookId, targetLevel, weeklyHours });
-      // 后端会在每周时长变化时自动重排在途计划的任务日期，把结果带回来做提示。
+      const saved = await api.saveLearnerGoal({ bookId, targetLevel, dailyMinutes, targetDate });
+      // 后端会在每日时长或目标日期变化时自动重排在途计划的任务日期。
       onSaved({
         bookId,
         targetLevel,
-        weeklyHours,
+        dailyMinutes,
+        targetDate,
         rescheduled: saved.rescheduled,
         estimatedDays: saved.estimatedDays,
         planRefreshSuggested: saved.planRefreshSuggested,
@@ -116,7 +136,7 @@ export function GoalsSetupView({
         <span className="onboard-line" />
         <div className={`onboard-step ${stepTwoActive ? "on" : ""}`}><span className="dot">2</span>目标水平</div>
         <span className="onboard-line" />
-        <div className="onboard-step"><span className="dot">3</span>每周时长</div>
+        <div className="onboard-step"><span className="dot">3</span>每日时长与日期</div>
       </div>
 
       <div className="card onboard-card">
@@ -175,22 +195,35 @@ export function GoalsSetupView({
           ))}
         </div>
 
-        <div className="card-heading onboard-heading"><span>第三步 · 每周学习时长</span></div>
+        <div className="card-heading onboard-heading"><span>第三步 · 每天学习时长</span></div>
         <div className="hours-row">
           {/* 滑块覆盖常用区间，右侧输入框不设上限，允许填写任意强度 */}
-          <input type="range" min={1} max={40} value={Math.min(weeklyHours, 40)} onChange={(event) => setWeeklyHours(Number(event.target.value))} aria-label="每周学习时长" />
+          <input type="range" min={15} max={240} step={5} value={Math.min(dailyMinutes, 240)} onChange={(event) => setDailyMinutes(Number(event.target.value))} aria-label="每天学习时长" />
           <div className="hours-input">
             <input
               type="number"
               min={1}
-              value={weeklyHours}
-              onChange={(event) => setWeeklyHours(Math.max(1, Number(event.target.value) || 1))}
-              aria-label="每周学习小时数"
+              max={1440}
+              value={dailyMinutes}
+              onChange={(event) => setDailyMinutes(Math.max(1, Number(event.target.value) || 1))}
+              aria-label="每天学习分钟数"
             />
-            <span>小时/周</span>
+            <span>分钟/天</span>
           </div>
         </div>
-        {weeklyHours > 40 && <p className="hours-note">每周超过 40 小时属于高强度安排，注意留出休息时间。</p>}
+        {dailyMinutes > 480 && <p className="hours-note">每天超过 8 小时属于高强度安排，注意留出休息时间。</p>}
+
+        <div className="card-heading onboard-heading"><span>第四步 · 期望完成日期</span></div>
+        <div className="goal-date-row">
+          <input
+            type="date"
+            min={dateInputValue(new Date())}
+            value={targetDate}
+            onChange={(event) => setTargetDate(event.target.value)}
+            aria-label="期望完成日期"
+          />
+          <span>系统会结合每天可学习时间安排任务进度</span>
+        </div>
 
         {saveError && <div className="auth-message error" style={{ marginTop: 16 }}><Icon name="alert" size={15} /><span>{saveError}</span></div>}
 

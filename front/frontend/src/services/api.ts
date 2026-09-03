@@ -31,9 +31,9 @@ export type BookCatalog = { books: BookCatalogItem[] };
  * 学习目标。
  * 【后端接入清单】POST /api/learner-goals -> LearnerGoalResult
  */
-export type LearnerGoalPayload = { bookId: string; targetLevel: string; weeklyHours: number };
+export type LearnerGoalPayload = { bookId: string; targetLevel: string; dailyMinutes: number; targetDate: string };
 export type LearnerGoalResult = {
-  goalId: string; bookId: string; targetLevel: string; weeklyHours: number; updatedAt?: string;
+  goalId: string; bookId: string; targetLevel: string; dailyMinutes: number; targetDate?: string | null; updatedAt?: string;
   /** 保存时是否顺带按新预算重排了在途计划的任务日期（只改日期，无损） */
   rescheduled?: boolean;
   /** 重排后预计多少天完成 */
@@ -65,7 +65,7 @@ export type DiagnosticStartResult = { diagnosticId: string; questions: Diagnosti
 export type DiagnosticResult = { level: string; accuracy: string; confidence: string; evidence: string; answerPerformance: string; generatedAt: string; relatedScope: string };
 export type LearningPlanBook = { id: string; title: string; shortTitle: string };
 /**
- * 排课时间预算。由后端按「每周时长 ÷ 7」得到每日分钟数，
+ * 排课时间预算。后端直接使用用户设定的每日学习分钟数，
  * 再用历史「计划 vs 实际」的中位数比值（paceFactor）折算实际占用。
  * 任务自己的 minutes 始终是 AI 的原始估计，不会被校准值改写。
  */

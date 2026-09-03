@@ -11,6 +11,7 @@ from modules.diagnosis.agent import DiagnosticAgent
 from modules.diagnosis.services import AssessmentService, DiagnosisResultStore, GeneratedQuestionBank
 from modules.diagnosis.workflow import DiagnosisWorkflow
 from modules.learner_goals.module import LearnerGoalModule
+from modules.learner_goals.repository import MysqlLearnerGoalRepository
 from modules.learner_profile.workflow import JsonLearnerProfileRepository, LearnerProfileWorkflow
 from modules.learning_plan.module import LearningPlanModule
 from modules.learning_plan.agent import LearningPlanAgent
@@ -87,7 +88,9 @@ def build_api_dependencies(settings: common_api.config.Settings | None = None) -
         learning_record=learning_record_module,
         knowledge_point_catalog=knowledge_point_catalog,
     )
-    learner_goal_module = LearnerGoalModule()
+    learner_goal_module = LearnerGoalModule(
+        repository=MysqlLearnerGoalRepository(database_engine)
+    )
     learning_plan_module = LearningPlanModule(
         result_repository,
         LearningPlanAgent(DeepSeekLLMClient.from_env()),

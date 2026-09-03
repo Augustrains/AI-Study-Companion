@@ -348,7 +348,7 @@ function App() {
     setRecords([]);
   };
 
-  const handleGoalSaved = (result: { bookId: string; targetLevel: string; weeklyHours: number; rescheduled?: boolean; estimatedDays?: number | null; planRefreshSuggested?: boolean }) => {
+  const handleGoalSaved = (result: { bookId: string; targetLevel: string; dailyMinutes: number; targetDate: string; rescheduled?: boolean; estimatedDays?: number | null; planRefreshSuggested?: boolean }) => {
     if (user) {
       try {
         window.localStorage.setItem(goalStorageKey(user.userId), JSON.stringify(result));
@@ -369,8 +369,8 @@ function App() {
       showToast(
         "学习目标已保存",
         result.estimatedDays
-          ? `已按新的每周时长重排学习计划，预计 ${result.estimatedDays} 天完成。`
-          : "已按新的每周时长重排学习计划。",
+          ? `已按新的每日时长重排学习计划，预计 ${result.estimatedDays} 天完成。`
+          : "已按新的每日时长重排学习计划。",
       );
     } else {
       showToast("学习目标已保存", "可以开始能力诊断，或先查看今日学习。");
