@@ -6,6 +6,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 from .errors import ConfigurationError
 
 
@@ -49,7 +51,7 @@ class Settings:
     # 后端 API 监听地址。
     host: str = "127.0.0.1"
     # 后端 API 监听端口。
-    backend_port: int = 8000
+    backend_port: int = 8001
     # 前端开发服务器端口。
     frontend_port: int = 5173
     # 日志级别，例如 DEBUG、INFO、WARNING。
@@ -58,16 +60,6 @@ class Settings:
     use_real_api: bool = True
     # 是否启用存储备份策略，供持久化层使用。
     storage_backup: bool = True
-
-    @property
-    def profile_path(self) -> Path:
-        """返回学习者档案 JSON 文件的默认路径。"""
-        return self.data_dir / "profiles" / "learner_profiles.json"
-
-    @property
-    def memory_path(self) -> Path:
-        """记忆模块持久化文件的默认路径。"""
-        return self.data_dir / "memory" / "learner_memories.json"
 
     @property
     def question_new_dir(self) -> Path:
@@ -94,6 +86,11 @@ class Settings:
         default_model = self.project_dir / "models" / "bge-m3"
         return os.getenv("STUDY_COMPANION_EMBEDDING_MODEL", str(default_model) if default_model.exists() else "BAAI/bge-m3")
 
+    @property
+    def tavily_api_key(self) -> str | None:
+        """Optional Tavily MCP credential for the daily material-search agent."""
+        return os.getenv("TAVILY_API_KEY") or None
+
     @classmethod
     def from_env(cls, project_dir: str | Path | None = None) -> "Settings":
         """从环境变量构造配置对象。
@@ -102,5 +99,6 @@ class Settings:
         当前 common 包的位置推导项目根目录。
         """
         root = Path(project_dir or Path(__file__).resolve().parents[2]).resolve()
+        load_dotenv(root / ".env", override=False)
         data_dir = Path(os.getenv("STUDY_COMPANION_DATA_DIR", root / "data")).resolve()
-        return cls(root, data_dir, os.getenv("STUDY_COMPANION_HOST", "127.0.0.1"), _int("STUDY_COMPANION_BACKEND_PORT", 8000), _int("STUDY_COMPANION_FRONTEND_PORT", 5173), os.getenv("STUDY_COMPANION_LOG_LEVEL", "INFO").upper(), _bool("STUDY_COMPANION_USE_REAL_API", True), _bool("STUDY_COMPANION_STORAGE_BACKUP", True))
+        return cls(root, data_dir, os.getenv("STUDY_COMPANION_HOST", "127.0.0.1"), _int("STUDY_COMPANION_BACKEND_PORT", 8001), _int("STUDY_COMPANION_FRONTEND_PORT", 5173), os.getenv("STUDY_COMPANION_LOG_LEVEL", "INFO").upper(), _bool("STUDY_COMPANION_USE_REAL_API", True), _bool("STUDY_COMPANION_STORAGE_BACKUP", True))

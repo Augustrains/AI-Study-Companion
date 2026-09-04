@@ -6,47 +6,28 @@ from fastapi import APIRouter, HTTPException, Query
 
 from modules.common.errors import ValidationAppError
 
-from .schemas import ProfileWorkflowReviewRequest, ProfileWorkflowStartRequest
-from .workflow import LearnerProfileWorkflow
+from .module import MySqlLearnerProfileModule
+from .schemas import ProfileSetupRequest
 
 
-def build_router(module: LearnerProfileWorkflow) -> APIRouter:
+def build_router(module: MySqlLearnerProfileModule) -> APIRouter:
     router = APIRouter(prefix="/api/learner-profile", tags=["learner-profile"])
 
-    @router.get("")
-    def get_profile(user_id: str = Query(..., min_length=1), learning_domain: str = "") -> dict[str, Any]:
-        profile = module.get(user_id.strip(), learning_domain.strip() or None)
-        return {"exists": profile is not None, "profile": profile.to_dict() if profile else None}
+    @router.get("/books")
+    def list_books() -> dict[str, Any]:
+        return {"books": module.books()}
 
-    @router.get("/knowledge-points")
-    def get_knowledge_points(learning_domain: str = Query(..., min_length=1)) -> dict[str, Any]:
-        return {"learningDomain": learning_domain, "knowledgePoints": module.knowledge_points(learning_domain)}
+    @router.get("/setup")
+    def get_setup(user_id: int = Query(..., gt=0), book_id: int = Query(..., gt=0)) -> dict[str, Any]:
+        profile = module.get_setup(user_id, book_id)
+        return {"exists": profile is not None, "profile": profile}
 
-    @router.post("/workflows", status_code=201)
-    def start_workflow(payload: ProfileWorkflowStartRequest) -> dict[str, Any]:
+    @router.post("/setup")
+    def save_setup(payload: ProfileSetupRequest) -> dict[str, Any]:
         try:
-            draft = module.start_workflow(payload.model_dump(exclude_none=True))
+            profile = module.save_setup(payload.model_dump())
         except (ValidationAppError, ValueError, TypeError) as exc:
             raise HTTPException(status_code=400, detail={"code": "INVALID_REQUEST", "message": str(exc)}) from exc
-        return {
-            "workflowId": draft["workflow_id"],
-            "status": "pending_confirmation",
-            "draft": draft["draft_profile"],
-            "allowedActions": draft["allowed_actions"],
-        }
-
-    @router.post("/workflows/{workflow_id}/review")
-    def review_workflow(workflow_id: str, payload: ProfileWorkflowReviewRequest) -> dict[str, Any]:
-        try:
-            profile = module.review_workflow(
-                workflow_id,
-                action=payload.action.strip(),
-                corrections=payload.corrections,
-            )
-        except (KeyError, RuntimeError, ValueError) as exc:
-            raise HTTPException(status_code=409, detail={"code": "WORKFLOW_STATE_ERROR", "message": str(exc)}) from exc
-        if profile is None:
-            return {"status": "rejected", "profile": None}
-        return {"status": "completed", "exists": True, "profile": profile.to_dict()}
+        return {"exists": True, "profile": profile}
 
     return router

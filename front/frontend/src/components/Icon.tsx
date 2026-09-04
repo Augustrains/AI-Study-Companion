@@ -1,4 +1,4 @@
-export type IconName = "home" | "target" | "calendar" | "chart" | "chat" | "user" | "settings" | "help" | "book-open" | "book" | "chevron-down" | "chevron-right" | "arrow-right" | "arrow-up-right" | "check" | "check-circle" | "clock" | "spark" | "file" | "send" | "info" | "filter" | "plus" | "more" | "close" | "alert" | "shield" | "bell" | "download" | "trash" | "log-out" | "lock";
+export type IconName = "home" | "target" | "calendar" | "chart" | "chat" | "user" | "settings" | "help" | "book-open" | "book" | "lock" | "chevron-down" | "chevron-right" | "arrow-right" | "arrow-up-right" | "check" | "check-circle" | "clock" | "spark" | "file" | "send" | "info" | "filter" | "plus" | "more" | "close";
 
 const paths: Record<IconName, string> = {
   home: "M3 10.5 12 3l9 7.5M5.5 9v10h5v-6h3v6h5V9M8 20h8",
@@ -11,6 +11,7 @@ const paths: Record<IconName, string> = {
   help: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm-1-6h2m-2-2.5c0-1.7 2.5-1.7 2.5-3.4A2.5 2.5 0 0 0 8.9 8.2",
   "book-open": "M3 5.5A2.5 2.5 0 0 1 5.5 3H11v16H5.5A2.5 2.5 0 0 0 3 21V5.5Zm18 0A2.5 2.5 0 0 0 18.5 3H13v16h5.5A2.5 2.5 0 0 1 21 21V5.5Z",
   book: "M5 4h12a2 2 0 0 1 2 2v14H7a2 2 0 0 0-2 2V4Zm0 0a2 2 0 0 0-2 2v14a2 2 0 0 1 2-2h14",
+  lock: "M7 11V8a5 5 0 0 1 10 0v3m-11 0h12v10H6V11Zm6 4v2",
   "chevron-down": "m6 9 6 6 6-6",
   "chevron-right": "m9 6 6 6-6 6",
   "arrow-right": "M4 12h16m-6-6 6 6-6 6",
@@ -26,13 +27,6 @@ const paths: Record<IconName, string> = {
   plus: "M12 5v14m-7-7h14",
   more: "M5 12h.01M12 12h.01M19 12h.01",
   close: "m6 6 12 12M18 6 6 18",
-  alert: "M12 9v4m0 3h.01M10.3 3.9 2.4 17.1A2 2 0 0 0 4.1 20h15.8a2 2 0 0 0 1.7-2.9L13.7 3.9a2 2 0 0 0-3.4 0Z",
-  shield: "M12 3 4 6.2v5.3c0 4.9 3.4 9.2 8 10.5 4.6-1.3 8-5.6 8-10.5V6.2L12 3Z",
-  bell: "M18 9a6 6 0 1 0-12 0c0 5-2 6.5-2 6.5h16S18 14 18 9Zm-4.3 10.5a2 2 0 0 1-3.4 0",
-  download: "M12 3v12m0 0-4.5-4.5M12 15l4.5-4.5M4 20h16",
-  trash: "M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13",
-  "log-out": "M15 12H4m11 0-3.5-3.5M15 12l-3.5 3.5M9 4h9a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H9",
-  lock: "M6 11h12v9H6v-9Zm2.5 0V7.5a3.5 3.5 0 1 1 7 0V11",
 };
 
 export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {

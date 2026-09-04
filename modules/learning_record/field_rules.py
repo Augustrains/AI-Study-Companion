@@ -58,7 +58,7 @@ def _validate_activity_relation(payload: dict[str, Any]) -> None:
         "profile": {"profile_created", "profile_updated"},
         "qa": {"qa_started", "qa_asked", "qa_answered"},
         "diagnostic": {"diagnostic_started", "diagnostic_completed", "diagnostic_calibrated", "review_completed"},
-        "task": {"task_completed"},
+        "task": {"task_started", "task_completed"},
     }
     if activity_type not in expected_category[category]:
         raise common_api.errors.ValidationAppError(

@@ -38,6 +38,8 @@ def build_router(workflow: DiagnosisWorkflow) -> APIRouter:
             user_id=payload.user_id,
             book_id=book_id,
             learning_goal=payload.learning_goal,
+            learning_plan_day_id=payload.learning_plan_day_id,
+            learning_plan_item_id=payload.learning_plan_item_id,
         )
         return result
 

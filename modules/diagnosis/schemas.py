@@ -12,13 +12,9 @@ class DiagnosticStartRequest(BaseModel):
 
     book_id: str = Field(alias="bookId", min_length=1)
     learning_goal: str = Field(default="", alias="learningGoal", max_length=200)
-    user_id: str = Field(alias="userId", min_length=1)
-    """调用方必须显式给出用户 ID。
-
-    这里原先默认 "user_001"：前端漏传时后端静默按演示用户处理，
-    结果是诊断写进一个账号、今日学习读另一个账号，闭环表面正常实则断开。
-    改成必填后，漏传会立刻在联调阶段以 422 暴露出来。
-    """
+    user_id: str = Field(default="user_001", alias="userId", min_length=1)
+    learning_plan_day_id: int | None = Field(default=None, alias="learningPlanDayId", gt=0)
+    learning_plan_item_id: int | None = Field(default=None, alias="learningPlanItemId", gt=0)
 
 
 class DiagnosticAnswerRequest(BaseModel):

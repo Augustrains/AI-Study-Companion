@@ -22,6 +22,7 @@ ACTIVITY_TYPES = (
     "diagnostic_completed",
     "diagnostic_calibrated",
     "review_completed",
+    "task_started",
     "task_completed",
 )
 

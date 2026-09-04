@@ -7,58 +7,29 @@ from .module import LearningRecordModule
 from .schemas import LearningActivityListResponse, LearningActivityResponse, LearningEventRequest, LearningEventResponse
 
 
-def build_router(module: LearningRecordModule, learning_plan: Any | None = None) -> APIRouter:
+def build_router(module: LearningRecordModule) -> APIRouter:
     router = APIRouter(tags=["learning-records"])
 
     @router.post("/api/learning-events", response_model=LearningEventResponse)
     def write_learning_event(payload: LearningEventRequest) -> LearningEventResponse:
         """写入学习任务开始、完成、暂停或跳过事件。"""
-        plan_result: dict[str, Any] = {}
-        if learning_plan is not None and payload.event_type == "task_completed":
-            plan_result = learning_plan.complete_task(
-                user_id=payload.user_id.strip(),
-                task_id=payload.task_id.strip(),
-                plan_id=payload.plan_id.strip(),
-                book_id=payload.book_id.strip(),
-            )
-        # 完成任务时，知识点必须来自服务端任务，不能由前端覆盖。
-        recorded_knowledge_point_ids = (
-            list(plan_result.get("knowledgePointIds", []))
-            if payload.event_type == "task_completed" and learning_plan is not None
-            else payload.knowledge_point_ids
-        )
         activity = module.record_learning_event(
             user_id=payload.user_id.strip(),
             task_id=payload.task_id.strip(),
             task_title=payload.task_title.strip(),
             event_type=payload.event_type,
             status=payload.status,
-            plan_id=(str(plan_result.get("planId", "")) if plan_result else payload.plan_id),
-            book_id=(str(plan_result.get("bookId", "")) if plan_result else payload.book_id),
-            knowledge_point_ids=recorded_knowledge_point_ids,
-            duration_seconds=payload.duration_seconds,
-            planned_minutes=payload.planned_minutes,
-            detail={**payload.detail, "plan_completed": plan_result.get("planCompleted", False), "memory_updated": plan_result.get("memoryUpdated", False)},
+            plan_id=payload.plan_id,
+            book_id=payload.book_id,
+            knowledge_point_ids=payload.knowledge_point_ids,
+            detail=payload.detail,
             client_request_id=payload.client_request_id,
         )
-        # 这条完成记录带来了新的「计划 vs 实际」样本，据此重排剩下没做的任务日期。
-        # 只改日期、不动任务内容、不碰已完成的任务，所以可以自动做；
-        # 失败也只是排期没更新，不能让「任务已完成」这件事写不进去。
-        rescheduled = False
-        if learning_plan is not None and payload.event_type == "task_completed":
-            book = str(plan_result.get("bookId", "")) or payload.book_id.strip()
-            if book:
-                try:
-                    rescheduled = learning_plan.reschedule(user_id=payload.user_id.strip(), book_id=book) is not None
-                except Exception:  # noqa: BLE001
-                    rescheduled = False
-
         return LearningEventResponse(
             eventId=activity.id,
             activity=common_activity_to_response(activity),
-            planCompleted=bool(plan_result.get("planCompleted", False)),
-            memoryUpdated=bool(plan_result.get("memoryUpdated", False)),
-            planRescheduled=rescheduled,
+            planCompleted=False,
+            memoryUpdated=False,
         )
 
     @router.get("/api/learning-records", response_model=LearningActivityListResponse)

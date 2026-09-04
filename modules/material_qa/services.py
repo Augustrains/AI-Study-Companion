@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import csv
+import hashlib
+import logging
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +23,9 @@ from .models import (
     MaterialQaRetrievalResult,
 )
 from .schemas import MaterialQaSource
+
+
+logger = logging.getLogger(__name__)
 
 
 class MaterialQaActivityRecorder(Protocol):
@@ -344,6 +349,84 @@ class MaterialQaRetriever(Protocol):
         source_ids: list[str] | None = None,
     ) -> MaterialQaRetrievalResult:
         ...
+
+
+class MarkdownMaterialRetriever:
+    """Dependency-free fallback when the local Qdrant store is unavailable."""
+
+    def __init__(self, *, documents: dict[str, Path], top_k: int = 3) -> None:
+        self.documents = documents
+        self.top_k = top_k
+
+    def start(self) -> None:
+        """The fallback has no external process or model to initialise."""
+
+    def close(self) -> None:
+        return None
+
+    def retrieve(self, *, book_id: str, question: str, history: list[MaterialQaMessage], source_ids: list[str] | None = None) -> MaterialQaRetrievalResult:
+        del history
+        root = self.documents.get(book_id)
+        if root is None or not root.exists():
+            raise ResourceNotFoundError("material document not found", details={"book_id": book_id})
+        tokens = set(re.findall(r"[A-Za-z0-9_]{2,}|[\u4e00-\u9fff]{2,}", question.lower()))
+        candidates: list[tuple[int, Path, str]] = []
+        for path in list(root.rglob("*.md"))[:500]:
+            try:
+                text = path.read_text(encoding="utf-8", errors="ignore").strip()
+            except OSError:
+                continue
+            score = sum(text.lower().count(token) for token in tokens)
+            if score:
+                candidates.append((score, path, text))
+        if not candidates:
+            candidates = [(0, path, path.read_text(encoding="utf-8", errors="ignore").strip()) for path in list(root.rglob("*.md"))[:1]]
+        chunks: list[MaterialQaRetrievedChunk] = []
+        for score, path, text in sorted(candidates, key=lambda item: item[0], reverse=True)[:self.top_k]:
+            relative = str(path.relative_to(root))
+            source_id = hashlib.sha256(f"{book_id}:{relative}".encode()).hexdigest()[:16]
+            if source_ids and source_id not in source_ids:
+                continue
+            source = MaterialQaSource(id=source_id, type="教材", title=path.stem, location=relative, excerpt=text[:280], knowledgePointIds=["unknown"], bookId=book_id)
+            chunks.append(MaterialQaRetrievedChunk(text=text[:1800], source=source, score=float(score)))
+        return MaterialQaRetrievalResult(chunks=chunks)
+
+
+class ResilientMaterialRetriever:
+    """Prefer semantic retrieval, but preserve the rest of the application on lock conflicts."""
+
+    def __init__(self, primary: MaterialQaRetriever, fallback: MaterialQaRetriever) -> None:
+        self.primary = primary
+        self.fallback = fallback
+        self._use_fallback = False
+
+    def start(self) -> None:
+        try:
+            start = getattr(self.primary, "start", None)
+            if callable(start):
+                start()
+        except Exception as exc:
+            self._use_fallback = True
+            logger.warning("Qdrant retrieval is unavailable; using local Markdown fallback: %s", exc)
+        start_fallback = getattr(self.fallback, "start", None)
+        if callable(start_fallback):
+            start_fallback()
+
+    def close(self) -> None:
+        for retriever in (self.primary, self.fallback):
+            close = getattr(retriever, "close", None)
+            if callable(close):
+                close()
+
+    def retrieve(self, **kwargs: object) -> MaterialQaRetrievalResult:
+        if self._use_fallback:
+            return self.fallback.retrieve(**kwargs)  # type: ignore[arg-type]
+        try:
+            return self.primary.retrieve(**kwargs)  # type: ignore[arg-type]
+        except Exception as exc:
+            self._use_fallback = True
+            logger.warning("Qdrant retrieval failed during a request; switching to Markdown fallback: %s", exc)
+            return self.fallback.retrieve(**kwargs)  # type: ignore[arg-type]
 
 #实际检索模块
 class QdrantMaterialRetriever:
