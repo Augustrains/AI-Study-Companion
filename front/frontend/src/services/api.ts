@@ -7,6 +7,14 @@ export const USE_REAL_API = import.meta.env.VITE_USE_REAL_API !== "false";
 
 export type ApiState = "initial" | "loading" | "ready" | "empty" | "submitting" | "success" | "error" | "offline" | "stale";
 export type ApiError = { code: string; message: string; requestId?: string; retryable?: boolean; details?: unknown };
+export type BookCatalogItem = { id: string; title: string; shortTitle: string; subtitle: string; knowledgePointCount?: number; available?: boolean };
+export type BookCatalog = { books: BookCatalogItem[] };
+export type LearnerGoalPayload = { bookId: string; targetLevel: string; weeklyHours: number };
+export type LearnerGoalResult = LearnerGoalPayload & { goalId: string; updatedAt?: string; rescheduled?: boolean; estimatedDays?: number | null; planRefreshSuggested?: boolean };
+export type LearnerGoalLookup = { exists: boolean; goal?: LearnerGoalResult };
+export type LearningResource = { title: string; platform: string; url: string; language: string; kind: string; note: string };
+export type KnowledgePointResources = { knowledgePointId: string; resources: LearningResource[] };
+export type ResourceCatalog = { items: KnowledgePointResources[] };
 
 export type DiagnosticStartResult = { diagnosticId: string; questions: DiagnosticQuestion[] };
 export type DiagnosticResult = { level: string; accuracy: string; confidence: string; evidence: string; answerPerformance: string; generatedAt: string; relatedScope: string };
@@ -110,11 +118,31 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 const wait = (duration = 420) => new Promise((resolve) => window.setTimeout(resolve, duration));
+const mockGoals = new Map<string, LearnerGoalResult>();
 
 /**
  * 页面演示使用的模拟服务。它与真实接口保持同一组动作名称，后端接入时只替换服务实现。
  */
 export const mockApi = {
+  async getBooks(): Promise<BookCatalog> {
+    await wait(120);
+    return { books: books.map((book) => ({ id: book.id, title: book.title, shortTitle: book.shortTitle, subtitle: book.subtitle, available: true })) };
+  },
+  async getLearningResources(knowledgePointIds?: string[]): Promise<ResourceCatalog> {
+    await wait(120);
+    return { items: (knowledgePointIds ?? []).map((knowledgePointId) => ({ knowledgePointId, resources: [] })) };
+  },
+  async saveLearnerGoal(payload: LearnerGoalPayload): Promise<LearnerGoalResult> {
+    await wait(160);
+    const goal = { ...payload, goalId: `goal-${payload.bookId}`, updatedAt: new Date().toISOString() };
+    mockGoals.set(payload.bookId, goal);
+    return goal;
+  },
+  async getLearnerGoal(bookId: string): Promise<LearnerGoalLookup> {
+    await wait(100);
+    const goal = mockGoals.get(bookId);
+    return goal ? { exists: true, goal } : { exists: false };
+  },
   async createConversation(bookId: BookId): Promise<QaConversation> {
     await wait(260);
     return { conversationId: `mock-qa-${Date.now()}`, bookId, userId: "user_001", createdAt: new Date().toISOString(), status: "active" };
@@ -240,6 +268,19 @@ export const mockApi = {
  * 真实服务的接口映射。启用 VITE_USE_REAL_API=true 后，页面可以切换到后端。
  */
 export const realApi = {
+  getBooks: async (): Promise<BookCatalog> => {
+    try { return await request<BookCatalog>("/books"); } catch { return mockApi.getBooks(); }
+  },
+  getLearningResources: async (knowledgePointIds?: string[]): Promise<ResourceCatalog> => {
+    const query = knowledgePointIds?.length ? `?knowledgePointIds=${encodeURIComponent(knowledgePointIds.join(","))}` : "";
+    try { return await request<ResourceCatalog>(`/learning-resources${query}`); } catch { return mockApi.getLearningResources(knowledgePointIds); }
+  },
+  saveLearnerGoal: async (payload: LearnerGoalPayload): Promise<LearnerGoalResult> => {
+    try { return await request<LearnerGoalResult>("/learner-goals", { method: "POST", body: JSON.stringify(payload) }); } catch { return mockApi.saveLearnerGoal(payload); }
+  },
+  getLearnerGoal: async (bookId: string): Promise<LearnerGoalLookup> => {
+    try { return await request<LearnerGoalLookup>(`/learner-goals?bookId=${encodeURIComponent(bookId)}`); } catch { return mockApi.getLearnerGoal(bookId); }
+  },
   createConversation: (bookId: BookId) => request<QaConversation>("/rag/conversations", { method: "POST", body: JSON.stringify({ bookId, userId: "user_001" }) }),
   startDiagnostic: (bookId: BookId, learningGoal?: string, userId?: number, learningPlanDayId?: number, learningPlanItemId?: number) => request<DiagnosticStartResult>("/diagnostics/start", { method: "POST", body: JSON.stringify({ bookId, learningGoal, userId: userId ? String(userId) : undefined, learningPlanDayId, learningPlanItemId }) }),
   submitDiagnosticAnswer: (diagnosticId: string, payload: { questionId: string; answer: string; skipped?: boolean }) => request(`/diagnostics/${diagnosticId}/answers`, { method: "POST", body: JSON.stringify(payload) }),
