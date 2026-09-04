@@ -5,30 +5,31 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from modules.auth.api import build_router as build_auth_router
-from modules.auth.module import AuthModule
 from modules.common import api as common_api
-from modules.learner_goals.api import build_router as build_learner_goal_router
-from modules.learner_goals.module import LearnerGoalModule
 from modules.diagnosis.api import build_router as build_diagnosis_router
 from modules.learner_profile.api import build_router as build_profile_router
 from modules.learning_plan.api import build_router as build_learning_plan_router
 from modules.material_qa.api import build_router as build_material_qa_router
 from modules.learning_record.api import build_router as build_learning_record_router
-from modules.learning_resources.api import build_router as build_learning_resource_router
-from modules.learning_resources.module import LearningResourceModule
-from modules.today_learning.api import build_router as build_today_learning_router
 
 
 logger = logging.getLogger(__name__)
 
 
 #创建实例
-def create_app(dependencies: Any) -> FastAPI:
+def create_app(dependencies: Any, *, lifespan: Any = None) -> FastAPI:
     """Create the application and register feature-owned API routers."""
-    app = FastAPI(title="Study Companion API", version="1.0.0")
+    app = FastAPI(title="Study Companion API", version="1.0.0", lifespan=lifespan)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     @app.exception_handler(HTTPException)
     async def http_exception_handler(_request: Request, exc: HTTPException) -> JSONResponse:
@@ -80,15 +81,9 @@ def create_app(dependencies: Any) -> FastAPI:
         )
 
     #注册业务模块路由
-    # 认证：不依赖其它模块，单独持有 data/auth/users.json，并在启动时确保体验账号存在。
-    app.include_router(build_auth_router(getattr(dependencies, "auth", None) or AuthModule()))
-    app.include_router(build_learner_goal_router(getattr(dependencies, "learner_goals", None) or LearnerGoalModule(), dependencies.learning_plan))
     app.include_router(build_profile_router(dependencies.profile))
     app.include_router(build_diagnosis_router(dependencies.diagnosis))
     app.include_router(build_learning_plan_router(dependencies.learning_plan))
     app.include_router(build_material_qa_router(dependencies.material_qa))
-    app.include_router(build_learning_record_router(dependencies.learning_record, dependencies.learning_plan))
-    app.include_router(build_today_learning_router(dependencies.today_learning))
-    # 延伸学习资源：只读本地资源文件，无需注入依赖。
-    app.include_router(build_learning_resource_router(getattr(dependencies, "learning_resources", None) or LearningResourceModule()))
+    app.include_router(build_learning_record_router(dependencies.learning_record))
     return app

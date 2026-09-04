@@ -1,23 +1,17 @@
 from __future__ import annotations
 
-from typing import Any
-
 from pydantic import BaseModel, Field
 
 
-class ProfileWorkflowReviewRequest(BaseModel):
-    action: str
-    corrections: dict[str, Any] = Field(default_factory=dict)
+class ProfileSetupRequest(BaseModel):
+    """The only user-entered fields persisted by the MySQL profile setup."""
 
-
-class ProfileWorkflowStartRequest(BaseModel):
-    user_id: str = Field(min_length=1)
-    learning_domain: str = Field(min_length=1)
-    background: str = Field(min_length=1)
-    self_assessed_level: str = "unknown"
-    known_knowledge_point_ids: list[str] = Field(default_factory=list)
-    known_knowledge_point_note: str = ""
-    unknown_knowledge_point_ids: list[str] = Field(default_factory=list)
-    current_confusions: str = ""
-    additional_requirements: str = ""
-    preferences: dict[str, Any] = Field(default_factory=dict)
+    user_id: int = Field(gt=0)
+    book_id: int = Field(gt=0)
+    background: str = Field(min_length=1, max_length=10_000)
+    preferred_content_style: str = Field(min_length=1, max_length=256)
+    goal: str = Field(min_length=1, max_length=256)
+    aim_level: int = Field(ge=0, le=3)
+    daily_minutes: int = Field(gt=0, le=1_440)
+    start_date: str | None = None
+    target_date: str | None = None

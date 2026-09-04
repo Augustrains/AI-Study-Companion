@@ -1,270 +1,235 @@
-"""LLM-backed learning-plan generation with deterministic safeguards."""
+"""Deterministic seven-day planning agent."""
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, timedelta
 from typing import Any
-
-from modules.common.errors import ConfigurationError, ExternalServiceError
-from sdk.llm_client import LLMClient, NullLLMClient
-
-from .models import LEARNING_TASK_TYPES_BY_SOURCE
 
 
 @dataclass(frozen=True)
-class LearningPlanAgentInput:
-    """Verified facts and bounded choices available to the planning agent."""
-
-    book: dict[str, str]
-    goal: str
-    goal_level: str
-    diagnostic_summary: dict[str, Any]
-    knowledge_point_results: list[dict[str, Any]] = field(default_factory=list)
-    ability_units: list[dict[str, Any]] = field(default_factory=list)
-    question_evidence: list[dict[str, Any]] = field(default_factory=list)
-    candidate_resources: list[dict[str, Any]] = field(default_factory=list)
-    calibration: dict[str, Any] = field(default_factory=dict)
-    learner_preferences: dict[str, Any] = field(default_factory=dict)
-    constraints: dict[str, Any] = field(default_factory=dict)
+class WeeklyPlanningInput:
+    context: dict[str, Any]
+    workloads: list[dict[str, Any]]
+    start_date: date
+    plan_days: int = 7
+    pace_factors: dict[str, float] = field(default_factory=dict)
 
 
-class LearningPlanAgent:
-    """Generate a plan from verified diagnosis facts.
+class WeeklyLearningPlanAgent:
+    """Turn BKT opportunities into a paced, prerequisite-safe study plan."""
 
-    The model may choose ordering and learner-facing task wording, but backend
-    templates remain authoritative for IDs, evidence links, status and dates.
-    """
+    READING_MINUTES = 15
+    PRACTICE_MINUTES = 3
+    DIAGNOSTIC_MINUTES = 10
+    PLAN_DAYS = 7
+    MAX_ACTIVE_KNOWLEDGE_POINTS = 3
 
-    def __init__(self, llm_client: LLMClient | None = None) -> None:
-        self.llm_client = llm_client or NullLLMClient()
-    
-    #整个类的主入口
-    def build(
-        self,
-        agent_input: LearningPlanAgentInput,
-        *,
-        fallback_tasks: list[dict[str, Any]],
-    ) -> dict[str, Any]:
-        """Generate and validate an LLM plan, falling back on local templates."""
-        
-        #生成本地兜底计划
-        fallback = self._fallback_plan(agent_input, fallback_tasks)
-        try:
-            raw_response = self.llm_client.generate(self._build_prompt(agent_input))
-        except (ConfigurationError, ExternalServiceError):
-            return fallback
-        if not raw_response.strip():
-            return fallback
+    def build(self, agent_input: WeeklyPlanningInput) -> dict[str, Any]:
+        daily_minutes = int(agent_input.context["goal"]["daily_minutes"])
+        durations = self._durations(agent_input.pace_factors, daily_minutes)
+        if daily_minutes < durations["diagnostic"]:
+            raise ValueError(f"daily_minutes must be at least {self.DIAGNOSTIC_MINUTES}")
 
-        try:
-            payload = self._parse_json_response(raw_response)
-            tasks = self._validated_tasks(payload, agent_input, fallback_tasks)
-            advice = self._validated_advice(payload)
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
-            return fallback
+        states, deferred_states, review_states = self._states(agent_input.workloads)
+        days: list[dict[str, Any]] = []
+        for index in range(agent_input.plan_days):
+            scheduled = agent_input.start_date + timedelta(days=index)
+            capacity = daily_minutes - durations["diagnostic"]
+            # A review date is a scheduling constraint, not merely a value kept
+            # in the learner model.  Put due retrieval practice ahead of newly
+            # introduced material, then use the remaining daily budget for the
+            # BKT-driven learning sequence.
+            review_items = self._build_due_review_items(review_states, scheduled, capacity, durations)
+            capacity -= sum(int(item["minutes"]) for item in review_items)
+            learning_items = [*review_items, *self._build_day_learning_items(states, capacity, durations)]
+            focus = learning_items[0] if learning_items else self._next_focus(states)
+            days.append(self._day(scheduled, index, focus, learning_items, durations))
 
-        return {
-            "book": agent_input.book,
-            "goal": agent_input.goal,
-            "goalLevel": agent_input.goal_level,
-            "tasks": tasks,
-            "advice": advice or fallback["advice"],
-            "resources": agent_input.candidate_resources,
-        }
-
-    @staticmethod
-    def _parse_json_response(response: str) -> dict[str, Any]:
-        text = response.strip()
-        if text.startswith("```"):
-            lines = text.splitlines()
-            text = "\n".join(lines[1:-1]).strip()
-        payload = json.loads(text)
-        if not isinstance(payload, dict):
-            raise TypeError("learning plan response must be an object")
-        return payload
-
-    def _validated_tasks(
-        self,
-        payload: dict[str, Any],
-        agent_input: LearningPlanAgentInput,
-        fallback_tasks: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        raw_tasks = payload.get("tasks")
-        if not isinstance(raw_tasks, list):
-            raise TypeError("learning plan tasks must be a list")
-
-        allowed_types = set(
-            agent_input.constraints.get("allowedTaskTypes")
-            or LEARNING_TASK_TYPES_BY_SOURCE["diagnostic"]
+        deferred = sorted(
+            {
+                *(
+                    int(state["knowledge_point_id"])
+                    for state in states
+                    if bool(state["reading_pending"]) or int(state["practice_remaining"]) > 0
+                ),
+                *(int(state["knowledge_point_id"]) for state in deferred_states),
+            }
         )
-        minimum_minutes = int(agent_input.constraints.get("minTaskMinutes", 5))
-        maximum_minutes = int(agent_input.constraints.get("maxTaskMinutes", 60))
-        fallback_by_ability = {
-            str(task.get("ability_id", "")): task
-            for task in fallback_tasks
-            if task.get("ability_id")
+        return {"days": days, "deferred_knowledge_point_ids": deferred}
+
+    def _durations(self, factors: dict[str, float], daily_minutes: int) -> dict[str, int]:
+        baseline = {"reading": self.READING_MINUTES, "practice": self.PRACTICE_MINUTES, "review": self.PRACTICE_MINUTES, "diagnostic": self.DIAGNOSTIC_MINUTES}
+        durations = {key: max(1, round(value * max(0.6, min(2.0, float(factors.get(key, 1.0)))))) for key, value in baseline.items()}
+        durations["diagnostic"] = min(durations["diagnostic"], daily_minutes)
+        return durations
+
+    def _states(self, workloads: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]] , list[dict[str, Any]]]:
+        states: list[dict[str, Any]] = []
+        review_states: list[dict[str, Any]] = []
+        for workload in sorted(workloads, key=lambda item: (-float(item["priority_score"]), int(item["course_order"]))):
+            opportunities = max(0, int(workload["expected_practice_count"]))
+            if workload.get("next_review_at"):
+                review_states.append({
+                    **workload,
+                    "review_scheduled": False,
+                })
+            if opportunities <= 0:
+                continue
+            states.append({
+                **workload,
+                "reading_pending": True,
+                "practice_remaining": opportunities,
+                "next_practice_sequence": 1,
+                "review_scheduled": False,
+            })
+        # A seven-day window should develop a small group of high-gap points,
+        # rather than opening every weak point once and leaving no time for
+        # retrieval practice.  Priority already incorporates mastery gap and
+        # evidence confidence; course order breaks ties deterministically.
+        return states[:self.MAX_ACTIVE_KNOWLEDGE_POINTS], states[self.MAX_ACTIVE_KNOWLEDGE_POINTS:], review_states
+
+    def _build_due_review_items(self, states: list[dict[str, Any]], scheduled: date, capacity: int, durations: dict[str, int]) -> list[dict[str, Any]]:
+        """Reserve time for each knowledge point whose spaced review is due."""
+
+        items: list[dict[str, Any]] = []
+        due_states = sorted(
+            (
+                state
+                for state in states
+                if not bool(state["review_scheduled"])
+                and self._review_due_on_or_before(state.get("next_review_at"), scheduled)
+            ),
+            key=lambda state: (-float(state["priority_score"]), int(state["course_order"])),
+        )
+        for state in due_states:
+            if capacity < durations["review"]:
+                break
+            items.append(self._review_item(state, durations["review"]))
+            state["review_scheduled"] = True
+            capacity -= durations["review"]
+        return items
+
+    @staticmethod
+    def _review_due_on_or_before(next_review_at: Any, scheduled: date) -> bool:
+        if not next_review_at:
+            return False
+        if isinstance(next_review_at, datetime):
+            return next_review_at.date() <= scheduled
+        if isinstance(next_review_at, date):
+            return next_review_at <= scheduled
+        try:
+            return datetime.fromisoformat(str(next_review_at).replace("Z", "+00:00")).date() <= scheduled
+        except ValueError:
+            return False
+
+    def _build_day_learning_items(self, states: list[dict[str, Any]], capacity: int, durations: dict[str, int]) -> list[dict[str, Any]]:
+        """Schedule prerequisite reading, then at most one practice per point."""
+
+        items: list[dict[str, Any]] = []
+        practiced_today: set[int] = set()
+        while capacity >= durations["practice"]:
+            state = self._next_reading(states, capacity, durations["reading"])
+            if state is not None:
+                items.append(self._reading_item(state, durations["reading"]))
+                state["reading_pending"] = False
+                capacity -= durations["reading"]
+                if capacity >= durations["practice"] and int(state["practice_remaining"]) > 0:
+                    items.append(self._practice_item(state, durations["practice"]))
+                    practiced_today.add(int(state["knowledge_point_id"]))
+                    capacity -= durations["practice"]
+                continue
+
+            state = self._next_practice(states, practiced_today)
+            if state is None:
+                break
+            items.append(self._practice_item(state, durations["practice"]))
+            practiced_today.add(int(state["knowledge_point_id"]))
+            capacity -= durations["practice"]
+        return items
+
+    @staticmethod
+    def _next_reading(states: list[dict[str, Any]], capacity: int, reading_minutes: int) -> dict[str, Any] | None:
+        if capacity < reading_minutes:
+            return None
+        return next((state for state in states if bool(state["reading_pending"])), None)
+
+    @staticmethod
+    def _next_practice(states: list[dict[str, Any]], practiced_today: set[int]) -> dict[str, Any] | None:
+        return next((state for state in states if not bool(state["reading_pending"]) and int(state["practice_remaining"]) > 0 and int(state["knowledge_point_id"]) not in practiced_today), None)
+
+    @staticmethod
+    def _next_focus(states: list[dict[str, Any]]) -> dict[str, Any] | None:
+        return next((state for state in states if bool(state["reading_pending"]) or int(state["practice_remaining"]) > 0), None)
+
+    def _day(self, scheduled: date, index: int, focus: dict[str, Any] | None, learning_items: list[dict[str, Any]], durations: dict[str, int]) -> dict[str, Any]:
+        focus_name = str((focus or {}).get("knowledge_point_name") or "本日复习")
+        diagnostic = {
+            "title": f"学习前诊断：{focus_name}（{durations['diagnostic']}分钟）",
+            "description": f"先完成 {durations['diagnostic']} 分钟诊断题，校准今日后续任务难度。",
+            "source": "review_due",
+            "adaptive_reason": "围绕当天实际学习主题进行诊断，用于滚动更新掌握度与计划。",
+            "knowledge_point_id": int((focus or {}).get("knowledge_point_id") or 0),
+            "minutes": durations["diagnostic"],
+            "priority_score": float((focus or {}).get("priority_score") or 0),
         }
-        generated_by_ability: dict[str, dict[str, Any]] = {}
-        generated_order: list[str] = []
-
-        for raw_task in raw_tasks:
-            if not isinstance(raw_task, dict):
-                continue
-            ability_id = str(raw_task.get("abilityId", ""))
-            template = fallback_by_ability.get(ability_id)
-            if template is None or ability_id in generated_by_ability:
-                continue
-            task_type = str(raw_task.get("type", ""))
-            if task_type not in allowed_types:
-                task_type = str(template["type"])
-            try:
-                minutes = int(raw_task.get("minutes", template["minutes"]))
-            except (TypeError, ValueError):
-                minutes = int(template["minutes"])
-
-            generated = dict(template)
-            generated.update(
-                {
-                    "title": self._bounded_text(raw_task.get("title"), template["title"], 100),
-                    "type": task_type,
-                    "minutes": max(minimum_minutes, min(minutes, maximum_minutes)),
-                    "reason": self._bounded_text(raw_task.get("reason"), template["reason"], 300),
-                    "description": self._bounded_text(
-                        raw_task.get("description"), template["description"], 500
-                    ),
-                }
-            )
-            generated_by_ability[ability_id] = self._add_schedule(generated)
-            generated_order.append(ability_id)
-
-        # A malformed or incomplete model response must not silently remove a
-        # diagnosed ability from the plan. Missing units retain local defaults.
-        for ability_id, template in fallback_by_ability.items():
-            if ability_id not in generated_by_ability:
-                generated_by_ability[ability_id] = self._constrained_fallback_task(template, agent_input)
-                generated_order.append(ability_id)
-
-        if not generated_order and fallback_tasks:
-            raise ValueError("model returned no recognized planning units")
-        return [generated_by_ability[ability_id] for ability_id in generated_order]
-
-    @staticmethod
-    def _validated_advice(payload: dict[str, Any]) -> list[str]:
-        raw_advice = payload.get("advice", [])
-        if not isinstance(raw_advice, list):
-            return []
-        return [str(item).strip()[:300] for item in raw_advice if str(item).strip()][:5]
-
-    @staticmethod
-    def _bounded_text(value: Any, fallback: str, limit: int) -> str:
-        text = str(value).strip() if value is not None else ""
-        return (text or fallback)[:limit]
-
-    @staticmethod
-    def _add_schedule(task: dict[str, Any]) -> dict[str, Any]:
-        scheduled = dict(task)
-        scheduled.setdefault("expected_completion_date", date.today().isoformat())
-        return scheduled
-
-    def _constrained_fallback_task(
-        self,
-        task: dict[str, Any],
-        agent_input: LearningPlanAgentInput,
-    ) -> dict[str, Any]:
-        constrained = dict(task)
-        minimum = int(agent_input.constraints.get("minTaskMinutes", 5))
-        maximum = int(agent_input.constraints.get("maxTaskMinutes", 60))
-        constrained["minutes"] = max(minimum, min(int(constrained.get("minutes", minimum)), maximum))
-        return self._add_schedule(constrained)
-
-    def _fallback_plan(
-        self,
-        agent_input: LearningPlanAgentInput,
-        fallback_tasks: list[dict[str, Any]],
-    ) -> dict[str, Any]:
-        results = list(agent_input.knowledge_point_results)
-        records = list(agent_input.question_evidence)
-        weak_results = sorted(results, key=self._result_score)
-        accuracy = int(round(float(agent_input.diagnostic_summary.get("accuracy", 0))))
+        items = [diagnostic, *learning_items]
         return {
-            "book": agent_input.book,
-            "goal": agent_input.goal,
-            "goalLevel": agent_input.goal_level,
-            "tasks": [self._constrained_fallback_task(task, agent_input) for task in fallback_tasks],
-            "advice": self._build_advice(weak_results, records, accuracy),
-            "resources": agent_input.candidate_resources,
+            "date": scheduled.isoformat(),
+            "title": f"第 {index + 1} 天学习计划",
+            "adaptive_reason": "根据当前掌握度、目标掌握度和 BKT 预计练习次数生成，并遵守阅读先行与每日练习上限。",
+            "priority_score": round(max((float(item.get("priority_score", 0)) for item in items), default=0.0), 4),
+            "planned_minutes": sum(int(item["minutes"]) for item in items),
+            "knowledge_point_ids": sorted({int(item["knowledge_point_id"]) for item in items if int(item["knowledge_point_id"])}),
+            "items": items,
         }
 
-    @staticmethod
-    def _result_score(result: dict[str, Any]) -> tuple[int, float]:
-        status = result.get("effectiveMasteryLevel") or result.get("masteryLevel") or ""
-        correct = int(result.get("roundCorrect", 0))
-        total = int(result.get("roundTotal", 0))
-        return (0 if status in {"未测评", "不会", "了解"} else 1, correct / total if total else 0)
-
-    @staticmethod
-    def _build_advice(
-        weak_results: list[dict[str, Any]],
-        records: list[dict[str, Any]],
-        accuracy: int,
-    ) -> list[str]:
-        advice: list[str] = []
-        if weak_results:
-            weakest = weak_results[0]
-            name = str(weakest.get("knowledgePointName") or weakest.get("knowledgePointId") or "当前薄弱知识点")
-            advice.append(f"诊断正确率为 {accuracy}%；优先学习“{name}”，再进行针对性复测。")
-        skipped = sum(1 for item in records if item.get("outcome") == "skipped")
-        if skipped:
-            advice.append(f"本次诊断有 {skipped} 道题未完成，相关结论的证据仍需补充。")
-        if records and not advice:
-            advice.append(f"本次诊断正确率为 {accuracy}%，建议继续完成计划中的下一项任务。")
-        return advice
-
-    @staticmethod
-    def _build_prompt(agent_input: LearningPlanAgentInput) -> str:
-        context = {
-            "book": agent_input.book,
-            "learningGoal": agent_input.goal,
-            "goalLevel": agent_input.goal_level,
-            "diagnosticSummary": agent_input.diagnostic_summary,
-            "knowledgePointResults": agent_input.knowledge_point_results,
-            "abilityUnits": agent_input.ability_units,
-            "questionEvidence": agent_input.question_evidence,
-            "candidateResources": agent_input.candidate_resources,
-            "calibration": agent_input.calibration,
-            "learnerPreferences": agent_input.learner_preferences,
-            "constraints": agent_input.constraints,
+    def _reading_item(self, state: dict[str, Any], minutes: int) -> dict[str, Any]:
+        point_name = str(state["knowledge_point_name"])
+        return {
+            "title": f"阅读：{state.get('chapter_title') or '所属章节'}—{point_name}（{minutes}分钟）",
+            "description": f"阅读“{point_name}”对应章节内容，整理关键概念与例子。",
+            "source": "weak_point",
+            "adaptive_reason": "该知识点尚未完成阅读，先建立概念框架后再练习。",
+            "knowledge_point_id": int(state["knowledge_point_id"]),
+            "knowledge_point_name": point_name,
+            "minutes": minutes,
+            "priority_score": float(state["priority_score"]),
         }
-        return f"""你是 Study Companion 的学习计划 Agent。请根据后端已经验证的诊断事实生成学习任务排序和学习建议。
 
-规则：
-1. 不得修改或重新计算掌握等级、掌握分数、正确率和置信度。
-2. 每个任务的 abilityId 只能取自 abilityUnits；不得创造能力、知识点、题目或资料 ID。
-3. 每个 abilityId 最多输出一个任务，并覆盖所有 abilityUnits。
-4. type 只能取 constraints.allowedTaskTypes；minutes 必须在约束范围内。
-5. 如果提供 learnerPreferences.sessionTimeBudgetMinutes，每项任务时长不得超过该值；它是用户期望的单次学习时长，不是整个计划的总时长。
-6. 优先处理有效掌握等级较低、答错较多或用户校准后较弱的能力，并参考用户填写的 calibration.reason。
-7. title、reason、description 必须是简洁、可执行的中文，不要声称用户做过输入中没有记录的行为。
-8. candidateResources 仅包含本轮诊断知识点的关联来源；不得要求或创造完整资源目录。
-9. 只输出合法 JSON，不要输出 Markdown 或思考过程。
+    def _practice_item(self, state: dict[str, Any], minutes: int) -> dict[str, Any]:
+        sequence = int(state["next_practice_sequence"])
+        question_ids = state.get("question_ids") or []
+        question_id = question_ids[(sequence - 1) % len(question_ids)] if question_ids else None
+        reference = f"，优先题目 #{question_id}" if question_id else ""
+        state["practice_remaining"] = int(state["practice_remaining"]) - 1
+        state["next_practice_sequence"] = sequence + 1
+        point_name = str(state["knowledge_point_name"])
+        return {
+            "title": f"练习：{point_name}（第 {sequence} 次，{minutes}分钟）",
+            "description": f"完成一次围绕“{point_name}”的有效练习{reference}，记录错因并查看反馈。",
+            "source": "weak_point",
+            "adaptive_reason": "BKT 预计仍需有效练习；同一知识点每天最多安排一次。",
+            "knowledge_point_id": int(state["knowledge_point_id"]),
+            "knowledge_point_name": point_name,
+            "minutes": minutes,
+            "priority_score": float(state["priority_score"]),
+        }
 
-输出格式：
-{{
-  "tasks": [
-    {{
-      "abilityId": "输入中的能力ID",
-      "title": "任务标题",
-      "type": "concept_review|practice|retest",
-      "minutes": 20,
-      "reason": "基于诊断证据的原因",
-      "description": "具体执行说明"
-    }}
-  ],
-  "advice": ["总体学习建议"]
-}}
+    def _review_item(self, state: dict[str, Any], minutes: int) -> dict[str, Any]:
+        """Create a retrieval-practice task without consuming BKT new-practice demand."""
 
-输入：
-{json.dumps(context, ensure_ascii=False)}
-"""
+        question_ids = state.get("question_ids") or []
+        question_id = question_ids[0] if question_ids else None
+        reference = f"，优先题目 #{question_id}" if question_id else ""
+        point_name = str(state["knowledge_point_name"])
+        return {
+            "title": f"复习：{point_name}（{minutes}分钟）",
+            "description": f"根据遗忘间隔完成一次检索复习{reference}，重点回忆核心概念并记录错误。",
+            "source": "spaced_review",
+            "adaptive_reason": f"该知识点的下次复习时间已到（{state.get('next_review_at')}），优先安排巩固。",
+            "knowledge_point_id": int(state["knowledge_point_id"]),
+            "knowledge_point_name": point_name,
+            "minutes": minutes,
+            "priority_score": float(state["priority_score"]),
+        }

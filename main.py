@@ -13,7 +13,7 @@ def parse_args() -> Namespace:
     parser = ArgumentParser(description="Study Companion 前后端启动入口")
     parser.add_argument("--demo", action="store_true", help="运行诊断工作流示例")
     parser.add_argument("--host", default="127.0.0.1", help="服务监听地址")
-    parser.add_argument("--backend-port", type=int, default=8000, help="Python API 端口")
+    parser.add_argument("--backend-port", type=int, default=8001, help="Python API 端口")
     parser.add_argument("--frontend-port", type=int, default=5173, help="Vite 前端端口")
     parser.add_argument("--mock-api", action="store_true", help="前端使用 Mock API")
     parser.add_argument(

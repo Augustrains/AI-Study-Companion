@@ -37,7 +37,7 @@ class DiagnosticQuestionPlanningTest(unittest.TestCase):
         planning_input = QuestionPlanningInput(
             learning_goal="理解机器学习基础",
             knowledge_point_mastery={"linear_regression": "了解", "supervised_learning": "掌握"},
-            knowledge_point_memory={"supervised_learning": {"next_review_at": "2000-01-01T00:00:00+00:00"}},
+            knowledge_point_review={"supervised_learning": {"next_review_at": "2000-01-01T00:00:00+00:00"}},
             available_question_counts={"linear_regression": 3, "supervised_learning": 2},
         )
 
@@ -56,7 +56,7 @@ class DiagnosticQuestionPlanningTest(unittest.TestCase):
             QuestionPlanningInput(
                 learning_goal="",
                 knowledge_point_mastery={"known": "掌握"},
-                knowledge_point_memory={},
+                knowledge_point_review={},
                 available_question_counts={"unknown": 7, "known": 3},
             )
         )
@@ -74,7 +74,7 @@ class DiagnosticQuestionPlanningTest(unittest.TestCase):
             QuestionPlanningInput(
                 learning_goal="巩固知识",
                 knowledge_point_mastery={"known": "掌握"},
-                knowledge_point_memory={"known": {"next_review_at": "2999-01-01T00:00:00+00:00"}},
+                knowledge_point_review={"known": {"next_review_at": "2999-01-01T00:00:00+00:00"}},
                 available_question_counts={"known": 2},
             )
         )
@@ -94,7 +94,7 @@ class DiagnosticQuestionPlanningTest(unittest.TestCase):
             QuestionPlanningInput(
                 learning_goal="聚焦薄弱知识点",
                 knowledge_point_mastery={},
-                knowledge_point_memory={},
+                knowledge_point_review={},
                 available_question_counts={f"point-{index}": 6 for index in range(5)},
             )
         )
@@ -116,7 +116,7 @@ class DiagnosticQuestionPlanningTest(unittest.TestCase):
             QuestionPlanningInput(
                 learning_goal="理解回归数据并完成可视化",
                 knowledge_point_mastery={},
-                knowledge_point_memory={},
+                knowledge_point_review={},
                 available_question_counts={"regression-data": 6, "classification": 6},
                 knowledge_point_catalog={
                     "regression-data": {

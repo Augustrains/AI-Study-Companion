@@ -31,8 +31,8 @@ from .models import (
 )
 
 
-def _review_due(memory: dict[str, Any]) -> bool:
-    value = memory.get("next_review_at") or memory.get("nextReviewAt")
+def _review_due(review_state: dict[str, Any]) -> bool:
+    value = review_state.get("next_review_at") or review_state.get("nextReviewAt")
     if not value:
         return False
     try:
@@ -60,7 +60,7 @@ def _eligible_question_counts(agent_input: QuestionPlanningInput) -> dict[str, i
     remembered = {
         point_id
         for point_id, level in agent_input.knowledge_point_mastery.items()
-        if level != "掌握" or _review_due(agent_input.knowledge_point_memory.get(point_id, {}))
+        if level != "掌握" or _review_due(agent_input.knowledge_point_review.get(point_id, {}))
     }
     eligible = (matched | remembered) & set(agent_input.available_question_counts)
     return {
@@ -77,7 +77,7 @@ def build_question_planning_prompt(agent_input: QuestionPlanningInput) -> str:
             "name": agent_input.knowledge_point_catalog.get(point_id, {}).get("name", ""),
             "description": agent_input.knowledge_point_catalog.get(point_id, {}).get("description", ""),
             "mastery": agent_input.knowledge_point_mastery.get(point_id, "未测评"),
-            "memory": agent_input.knowledge_point_memory.get(point_id, {}),
+            "review": agent_input.knowledge_point_review.get(point_id, {}),
             "availableQuestionCount": count,
         }
         for point_id, count in _eligible_question_counts(agent_input).items()
@@ -127,7 +127,7 @@ def _fallback_question_plan(agent_input: QuestionPlanningInput) -> list[Knowledg
     for point_id, available in _eligible_question_counts(agent_input).items():
         level = agent_input.knowledge_point_mastery.get(point_id, "未测评")
         mode = "retrieval" if level == "掌握" and _review_due(
-            agent_input.knowledge_point_memory.get(point_id, {})
+            agent_input.knowledge_point_review.get(point_id, {})
         ) else mode_by_level.get(level, "diagnostic")
         result.append(KnowledgePointQuestionPlan(point_id, min(count_by_level.get(level, 3), available, 4), mode))
     return result
@@ -162,7 +162,7 @@ def parse_question_plan(
         raw = by_id.get(point_id, {})
         default = fallback[point_id]
         mode = str(raw.get("taskMode", ""))
-        if mode not in TASK_MODES or (mode == "retrieval" and not _review_due(agent_input.knowledge_point_memory.get(point_id, {}))):
+        if mode not in TASK_MODES or (mode == "retrieval" and not _review_due(agent_input.knowledge_point_review.get(point_id, {}))):
             mode = default.task_mode
         try:
             count = int(raw.get("questionCount", default.question_count))

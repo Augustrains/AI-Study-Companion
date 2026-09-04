@@ -1,3 +1,3 @@
-from .workflow import LearnerProfileWorkflow
+from .module import MySqlLearnerProfileModule
 
-__all__ = ["LearnerProfileWorkflow"]
+__all__ = ["MySqlLearnerProfileModule"]
