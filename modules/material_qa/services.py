@@ -12,6 +12,7 @@ from uuid import uuid4
 from modules.common.errors import ResourceNotFoundError, ValidationAppError
 
 from .models import (
+    AnswerMode,
     MaterialQaAgentInput,
     MaterialQaAgentOutput,
     MaterialQaAnswer,
@@ -19,8 +20,11 @@ from .models import (
     MaterialQaMessage,
     MaterialQaRetrievedChunk,
     MaterialQaRetrievalResult,
+    ResponseQuality,
+    SocraticStateName,
 )
 from .schemas import MaterialQaSource
+from .repository import InMemoryMaterialQaMessageStore, MaterialQaMessageStore
 
 
 class MaterialQaActivityRecorder(Protocol):
@@ -29,46 +33,42 @@ class MaterialQaActivityRecorder(Protocol):
     def record_qa_started(self, *, user_id: str, book_id: str, conversation_id: str) -> object:
         ...
 
-#会话保存和读取
-class MaterialQaConversationStore:
-    """In-memory repository for concurrent material-QA conversations."""
-
-    def __init__(self) -> None:
-        self._conversations: dict[str, MaterialQaConversation] = {}
-
-    def save(self, conversation: MaterialQaConversation) -> MaterialQaConversation:
-        self._conversations[conversation.conversation_id] = conversation
-        return conversation
-
-    def get(self, conversation_id: str) -> MaterialQaConversation:
-        try:
-            return self._conversations[conversation_id]
-        except KeyError as exc:
-            raise ResourceNotFoundError(
-                "material QA conversation not found",
-                details={"conversation_id": conversation_id},
-            ) from exc
-
 #负责管理一次问答操作中的业务数据
 class MaterialQaService:
-    """Own conversation operations and material-QA input/output construction."""
+    """Own message-stream operations and material-QA input/output construction."""
+
+    HISTORY_LIMIT = 12
 
     def __init__(
         self,
-        store: MaterialQaConversationStore | None = None,
+        message_store: MaterialQaMessageStore | None = None,
         activity_recorder: MaterialQaActivityRecorder | None = None,
     ) -> None:
-        self.store = store or MaterialQaConversationStore()
+        self.message_store = message_store or InMemoryMaterialQaMessageStore()
         self.activity_recorder = activity_recorder
-
-    def create_conversation(self, *, book_id: str, user_id: str) -> MaterialQaConversation:
+    # 为前端生成一个临时的问答标识；如果用户明确点击了“清空对话”，就在数据库中插入上下文重置标记。
+    def create_conversation(
+        self,
+        *,
+        book_id: str,
+        user_id: str,
+        reset_context: bool = False,
+    ) -> MaterialQaConversation:
+        # conversation_id is retained as an API/UI request token only. Persistent
+        # history is intentionally grouped by user_id + book_id instead.
         conversation = MaterialQaConversation(
             conversation_id=f"qa-{uuid4().hex[:12]}",
             book_id=book_id,
             user_id=user_id,
             created_at=datetime.now(timezone.utc).isoformat(),
         )
-        self.store.save(conversation)
+        if reset_context:
+            self.message_store.reset_context(user_id=user_id, book_id=book_id)
+        else:
+            conversation.active_learning_task = self.message_store.get_active_learning_task(
+                user_id=user_id,
+                book_id=book_id,
+            )
         if self.activity_recorder is not None:
             self.activity_recorder.record_qa_started(
                 user_id=user_id,
@@ -77,48 +77,55 @@ class MaterialQaService:
             )
         return conversation
 
-    #会话准备
+    # Prepare the model history before the current question is persisted.
     def begin_question(
         self,
         *,
-        conversation_id: str,
+        user_id: str,
         book_id: str,
-        question: str,
-    ) -> tuple[MaterialQaConversation, list[MaterialQaMessage]]:
-        conversation = self.require_conversation(conversation_id, book_id)
-        history = list(conversation.messages)
-        conversation.messages.append(MaterialQaMessage(role="user", content=question))
-        self.store.save(conversation)
-        return conversation, history
+    ) -> list[MaterialQaMessage]:
+        return self.message_store.list_recent(
+            user_id=user_id,
+            book_id=book_id,
+            limit=self.HISTORY_LIMIT,
+        )
 
     #Agent生成结果后，更新会话
     def complete_question(
         self,
         *,
-        conversation: MaterialQaConversation,
+        conversation_id: str,
+        user_id: str,
+        book_id: str,
+        question: str,
         output: MaterialQaAgentOutput,
     ) -> MaterialQaAnswer:
-        conversation.messages.append(MaterialQaMessage(role="assistant", content=output.answer))
-        self.store.save(conversation)
+        self.message_store.save_exchange(
+            user_id=user_id,
+            book_id=book_id,
+            question=question,
+            answer=output.answer,
+            citations=output.citations,
+            answer_mode=output.answer_mode,
+            learning_task_id=output.learning_task_id,
+            socratic_state=output.socratic_state,
+            response_quality=output.response_quality,
+            socratic_completed=output.socratic_completed,
+        )
         return MaterialQaAnswer(
-            conversation_id=conversation.conversation_id,
+            conversation_id=conversation_id,
             answer=output.answer,
             refused=output.refused,
             citations=output.citations,
             related_knowledge_points=output.related_knowledge_points,
             recommended_action=output.recommended_action,
             answered_by_general_model=output.answered_by_general_model,
+            answer_mode=output.answer_mode,
+            learning_task_id=output.learning_task_id,
+            socratic_state=output.socratic_state,
+            response_quality=output.response_quality,
+            socratic_completed=output.socratic_completed,
         )
-
-    #业务校验
-    def require_conversation(self, conversation_id: str, book_id: str) -> MaterialQaConversation:
-        conversation = self.store.get(conversation_id)
-        if conversation.book_id != book_id:
-            raise ValidationAppError(
-                "conversation does not belong to the requested book",
-                details={"conversation_id": conversation_id, "book_id": book_id},
-            )
-        return conversation
 
     @staticmethod
     def agent_input(
@@ -127,12 +134,29 @@ class MaterialQaService:
         question: str,
         retrieval: MaterialQaRetrievalResult,
         allow_general_fallback: bool = False,
+        answer_mode: AnswerMode = "direct",
+        learning_task_id: str | None = None,
+        socratic_state: SocraticStateName | None = None,
+        socratic_directive: str = "",
+        root_question: str = "",
     ) -> MaterialQaAgentInput:
         return MaterialQaAgentInput(
             history=history,
             current_question=question,
             retrieval=retrieval,
             allow_general_fallback=allow_general_fallback,
+            answer_mode=answer_mode,
+            learning_task_id=learning_task_id,
+            socratic_state=socratic_state,
+            socratic_directive=socratic_directive,
+            root_question=root_question,
+        )
+
+    def finish_learning_task(self, *, user_id: str, book_id: str, learning_task_id: str) -> None:
+        self.message_store.finish_learning_task(
+            user_id=user_id,
+            book_id=book_id,
+            learning_task_id=learning_task_id,
         )
 
 
@@ -340,7 +364,6 @@ class MaterialQaRetriever(Protocol):
         *,
         book_id: str,
         question: str,
-        history: list[MaterialQaMessage],
         source_ids: list[str] | None = None,
     ) -> MaterialQaRetrievalResult:
         ...
@@ -385,10 +408,8 @@ class QdrantMaterialRetriever:
         *,
         book_id: str,
         question: str,
-        history: list[MaterialQaMessage],
         source_ids: list[str] | None = None,
     ) -> MaterialQaRetrievalResult:
-        del history
         from langchain_qdrant import QdrantVectorStore
 
         client, embeddings = self._resources()

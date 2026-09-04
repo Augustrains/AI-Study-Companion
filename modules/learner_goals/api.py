@@ -34,15 +34,20 @@ def build_router(module: LearnerGoalModule, scheduler: PlanScheduler | None = No
             user_id=payload.user_id,
             book_id=payload.book_id,
             target_level=payload.target_level,
-            weekly_hours=payload.weekly_hours,
+            daily_minutes=payload.daily_minutes,
+            target_date=payload.target_date.isoformat() if payload.target_date else None,
         )
         response = LearnerGoalResponse(**goal.public_view())
 
-        hours_changed = previous is None or previous.weekly_hours != goal.weekly_hours
+        schedule_changed = (
+            previous is None
+            or previous.daily_minutes != goal.daily_minutes
+            or previous.target_date != goal.target_date
+        )
         level_changed = previous is not None and previous.target_level != goal.target_level
 
-        # 每周时长变了就立刻按新预算重排日期——这一步无损，不需要问用户。
-        if scheduler is not None and hours_changed:
+        # 每日时长或目标日期变化后，立即按新预算重排在途任务日期。
+        if scheduler is not None and schedule_changed:
             try:
                 plan = scheduler.reschedule(user_id=payload.user_id, book_id=payload.book_id)
             except Exception:  # noqa: BLE001 - 重排失败不该让「保存目标」这件事失败

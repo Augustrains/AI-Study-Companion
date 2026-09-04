@@ -88,6 +88,24 @@ class MaterialQaAgentTest(unittest.TestCase):
         self.assertTrue(output.refused)
         self.assertEqual(output.citations, [])
 
+    def test_repeated_json_output_uses_first_object_without_leaking_json(self):
+        client = RecordingLLMClient(
+            '{"refused": false, "answer": "先想一想训练集和测试集的差别。"}'
+            '{"refused": false, "answer": "重复内容"}'
+        )
+        agent_input = MaterialQaAgentInput(
+            history=[],
+            current_question="我不知道",
+            retrieval=MaterialQaRetrievalResult(chunks=[]),
+            answer_mode="socratic",
+            socratic_state="scaffold",
+        )
+
+        output = MaterialQaAgent(client).generate(agent_input)
+
+        self.assertEqual(output.answer, "先想一想训练集和测试集的差别。")
+        self.assertNotIn("refused", output.answer)
+
 
 if __name__ == "__main__":
     unittest.main()

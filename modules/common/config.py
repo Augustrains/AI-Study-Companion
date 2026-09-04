@@ -6,6 +6,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 from .errors import ConfigurationError
 
 
@@ -58,6 +60,12 @@ class Settings:
     use_real_api: bool = True
     # 是否启用存储备份策略，供持久化层使用。
     storage_backup: bool = True
+    # MySQL 连接配置；第一阶段只负责读取，不在此处建立连接。
+    db_host: str = ""
+    db_port: int = 3306
+    db_name: str = ""
+    db_user: str = ""
+    db_password: str = ""
 
     @property
     def profile_path(self) -> Path:
@@ -102,5 +110,21 @@ class Settings:
         当前 common 包的位置推导项目根目录。
         """
         root = Path(project_dir or Path(__file__).resolve().parents[2]).resolve()
+        # 允许从项目根目录 .env 读取配置；显式系统环境变量优先。
+        load_dotenv(root / ".env", override=False)
         data_dir = Path(os.getenv("STUDY_COMPANION_DATA_DIR", root / "data")).resolve()
-        return cls(root, data_dir, os.getenv("STUDY_COMPANION_HOST", "127.0.0.1"), _int("STUDY_COMPANION_BACKEND_PORT", 8000), _int("STUDY_COMPANION_FRONTEND_PORT", 5173), os.getenv("STUDY_COMPANION_LOG_LEVEL", "INFO").upper(), _bool("STUDY_COMPANION_USE_REAL_API", True), _bool("STUDY_COMPANION_STORAGE_BACKUP", True))
+        return cls(
+            root,
+            data_dir,
+            os.getenv("STUDY_COMPANION_HOST", "127.0.0.1"),
+            _int("STUDY_COMPANION_BACKEND_PORT", 8000),
+            _int("STUDY_COMPANION_FRONTEND_PORT", 5173),
+            os.getenv("STUDY_COMPANION_LOG_LEVEL", "INFO").upper(),
+            _bool("STUDY_COMPANION_USE_REAL_API", True),
+            _bool("STUDY_COMPANION_STORAGE_BACKUP", True),
+            os.getenv("STUDY_COMPANION_DB_HOST", ""),
+            _int("STUDY_COMPANION_DB_PORT", 3306),
+            os.getenv("STUDY_COMPANION_DB_NAME", ""),
+            os.getenv("STUDY_COMPANION_DB_USER", ""),
+            os.getenv("STUDY_COMPANION_DB_PASSWORD", ""),
+        )

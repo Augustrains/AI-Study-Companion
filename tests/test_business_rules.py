@@ -92,17 +92,17 @@ check("没设过目标返回 exists=false 而不是 404", response.status_code =
 
 response = goals.post(
     "/api/learner-goals",
-    json={"bookId": "ml", "targetLevel": "能够解决进阶应用问题", "weeklyHours": 12, "userId": "demo_user"},
+    json={"bookId": "ml", "targetLevel": "能够解决进阶应用问题", "dailyMinutes": 60, "targetDate": "2099-12-31", "userId": "demo_user"},
 )
 check("保存目标", response.status_code == 200, response.text)
-check("响应是 camelCase", response.json()["weeklyHours"] == 12, response.text)
+check("响应是 camelCase", response.json()["dailyMinutes"] == 60 and response.json()["targetDate"] == "2099-12-31", response.text)
 
 response = goals.get("/api/learner-goals?userId=demo_user&bookId=ml")
-check("能读回同一份（页面回填依赖它）", response.json()["goal"]["weeklyHours"] == 12, response.text)
+check("能读回同一份（页面回填依赖它）", response.json()["goal"]["dailyMinutes"] == 60, response.text)
 
 goals.post(
     "/api/learner-goals",
-    json={"bookId": "ml", "targetLevel": "能够复述核心概念", "weeklyHours": 3, "userId": "demo_user"},
+    json={"bookId": "ml", "targetLevel": "能够复述核心概念", "dailyMinutes": 26, "targetDate": "2099-12-31", "userId": "demo_user"},
 )
 response = goals.get("/api/learner-goals?userId=demo_user&bookId=ml")
 check("改目标是覆盖不是追加", response.json()["goal"]["targetLevel"] == "能够复述核心概念", response.text)
@@ -112,14 +112,14 @@ check("目标按用户隔离", response.json()["exists"] is False, response.text
 
 response = goals.post(
     "/api/learner-goals",
-    json={"bookId": "ml", "targetLevel": "随便编一个", "weeklyHours": 5, "userId": "demo_user"},
+    json={"bookId": "ml", "targetLevel": "随便编一个", "dailyMinutes": 30, "targetDate": "2099-12-31", "userId": "demo_user"},
 )
 check("非法目标水平被拒", response.status_code == 400, response.text)
 
-response = goals.post("/api/learner-goals", json={"bookId": "ml", "targetLevel": "能够复述核心概念", "weeklyHours": 5})
+response = goals.post("/api/learner-goals", json={"bookId": "ml", "targetLevel": "能够复述核心概念", "dailyMinutes": 30, "targetDate": "2099-12-31"})
 check("缺 userId 被拒，不再静默按 user_001 处理", response.status_code == 422, response.text)
 
-check("每周 3 小时 → 每天约 26 分钟", goal_module.daily_minutes_budget(user_id="demo_user", book_id="ml") == 26)
+check("每天学习时长直接作为排课预算", goal_module.daily_minutes_budget(user_id="demo_user", book_id="ml") == 26)
 check("没设目标时不给预算", goal_module.daily_minutes_budget(user_id="nobody", book_id="ml") is None)
 
 
@@ -471,7 +471,7 @@ scheduler_client = TestClient(reschedule_app, raise_server_exceptions=False)
 
 response = scheduler_client.post(
     "/api/learner-goals",
-    json={"bookId": "ml", "targetLevel": "能够独立完成基础练习", "weeklyHours": 14, "userId": "demo_user"},
+    json={"bookId": "ml", "targetLevel": "能够独立完成基础练习", "dailyMinutes": 120, "targetDate": "2099-12-31", "userId": "demo_user"},
 )
 check("保存目标顺带重排在途计划", response.json()["rescheduled"] is True, response.text)
 first_days = response.json()["estimatedDays"]
@@ -480,7 +480,7 @@ check("首次保存不提示重做诊断", response.json()["planRefreshSuggested
 
 response = scheduler_client.post(
     "/api/learner-goals",
-    json={"bookId": "ml", "targetLevel": "能够独立完成基础练习", "weeklyHours": 5, "userId": "demo_user"},
+    json={"bookId": "ml", "targetLevel": "能够独立完成基础练习", "dailyMinutes": 43, "targetDate": "2099-12-31", "userId": "demo_user"},
 )
 check("调低每周时长 → 重排且需要更多天", response.json()["rescheduled"] and response.json()["estimatedDays"] > first_days, response.json())
 
@@ -492,7 +492,7 @@ check("重排结果真的落盘了", persisted.get("timeBudget", {}).get("dailyM
 
 response = scheduler_client.post(
     "/api/learner-goals",
-    json={"bookId": "ml", "targetLevel": "能够指导他人 / 应对面试", "weeklyHours": 5, "userId": "demo_user"},
+    json={"bookId": "ml", "targetLevel": "能够指导他人 / 应对面试", "dailyMinutes": 43, "targetDate": "2099-12-31", "userId": "demo_user"},
 )
 check("只改目标水平 → 提示可以重做诊断", response.json()["planRefreshSuggested"] is True, response.json())
 check("只改目标水平 → 不自动重生成任务（重生成会清掉完成进度）", response.json()["rescheduled"] is False)
@@ -500,7 +500,7 @@ check("任务内容原样保留", len(json.loads(plans_path.read_text(encoding="
 
 response = scheduler_client.post(
     "/api/learner-goals",
-    json={"bookId": "ml", "targetLevel": "能够指导他人 / 应对面试", "weeklyHours": 9, "userId": "other_user"},
+    json={"bookId": "ml", "targetLevel": "能够指导他人 / 应对面试", "dailyMinutes": 77, "targetDate": "2099-12-31", "userId": "other_user"},
 )
 check("别人改目标不会动到我的计划", response.json()["rescheduled"] is False, response.json())
 
