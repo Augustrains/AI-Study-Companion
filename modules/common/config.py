@@ -105,9 +105,6 @@ class Settings:
         当前 common 包的位置推导项目根目录。
         """
         root = Path(project_dir or Path(__file__).resolve().parents[2]).resolve()
-        load_dotenv(root / ".env", override=False)
-        data_dir = Path(os.getenv("STUDY_COMPANION_DATA_DIR", root / "data")).resolve()
-        return cls(root, data_dir, os.getenv("STUDY_COMPANION_HOST", "127.0.0.1"), _int("STUDY_COMPANION_BACKEND_PORT", 8001), _int("STUDY_COMPANION_FRONTEND_PORT", 5173), os.getenv("STUDY_COMPANION_LOG_LEVEL", "INFO").upper(), _bool("STUDY_COMPANION_USE_REAL_API", True), _bool("STUDY_COMPANION_STORAGE_BACKUP", True))
         # 允许从项目根目录 .env 读取配置；显式系统环境变量优先。
         load_dotenv(root / ".env", override=False)
         data_dir = Path(os.getenv("STUDY_COMPANION_DATA_DIR", root / "data")).resolve()
