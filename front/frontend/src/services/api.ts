@@ -11,6 +11,22 @@ export type BookCatalogItem = { id: string; title: string; shortTitle: string; s
 export type BookCatalog = { books: BookCatalogItem[] };
 export type LearnerGoalPayload = { bookId: string; targetLevel: string; weeklyHours: number };
 export type LearnerGoalResult = LearnerGoalPayload & { goalId: string; updatedAt?: string; rescheduled?: boolean; estimatedDays?: number | null; planRefreshSuggested?: boolean };
+
+/**
+ * 学习目标。
+ * 【后端接入清单】POST /api/learner-goals -> LearnerGoalResult
+ */
+export type LearnerGoalPayload = { bookId: string; targetLevel: string; dailyMinutes: number; targetDate: string };
+export type LearnerGoalResult = {
+  goalId: string; bookId: string; targetLevel: string; dailyMinutes: number; targetDate?: string | null; updatedAt?: string;
+  /** 保存时是否顺带按新预算重排了在途计划的任务日期（只改日期，无损） */
+  rescheduled?: boolean;
+  /** 重排后预计多少天完成 */
+  estimatedDays?: number | null;
+  /** 目标水平变了：任务内容该跟着变，但重新生成会丢进度，所以只提示不自动做 */
+  planRefreshSuggested?: boolean;
+  diagnosableAbilities?: string[];
+};
 export type LearnerGoalLookup = { exists: boolean; goal?: LearnerGoalResult };
 export type LearningResource = { title: string; platform: string; url: string; language: string; kind: string; note: string };
 export type KnowledgePointResources = { knowledgePointId: string; resources: LearningResource[] };
@@ -20,6 +36,13 @@ export type DiagnosticStartResult = { diagnosticId: string; questions: Diagnosti
 export type DiagnosticResult = { level: string; accuracy: string; confidence: string; evidence: string; answerPerformance: string; generatedAt: string; relatedScope: string };
 export type LearningPlanBook = { id: string; title: string; shortTitle: string };
 export type LearningPlanResult = { book: LearningPlanBook; goal: string; goalLevel: string; tasks: LearningTask[]; advice: string[]; resources: Source[] };
+/**
+ * 排课时间预算。后端直接使用用户设定的每日学习分钟数，
+ * 再用历史「计划 vs 实际」的中位数比值（paceFactor）折算实际占用。
+ * 任务自己的 minutes 始终是 AI 的原始估计，不会被校准值改写。
+ */
+export type PlanTimeBudget = { dailyMinutes: number; totalMinutes: number; estimatedDays: number; paceFactor: number; adjustedTotalMinutes: number };
+export type LearningPlanResult = { book: LearningPlanBook; goal: string; goalLevel: string; tasks: LearningTask[]; advice: string[]; resources: Source[]; timeBudget?: PlanTimeBudget };
 export type LearningPlanLookup = { exists: boolean; plan: LearningPlanResult | null };
 /** MySQL 中 learning_plan / learning_plan_day / learning_plan_day_item 的七天计划读取结构。 */
 export type WeeklyPlanItem = {
@@ -75,6 +98,43 @@ export type TodayLearningResponse = {
 export type QaConversation = { conversationId: string; bookId: BookId; userId: string; createdAt: string; status: string };
 export type QaQuestionPayload = { bookId: BookId; question: string; conversationId?: string; sources?: Source[] };
 export type QaResult = { answer: string; refused: boolean; citations: Source[]; relatedKnowledgePoints?: string[]; recommendedAction?: string; conversationId?: string; requestId?: string };
+/**
+ * 后端暂时保留 conversationId 作为接口兼容令牌；问答历史实际按 userId + bookId 管理。
+ * resetContext 只在用户明确点击“清空对话”时发送。
+ */
+export type QaAnswerMode = "direct" | "socratic";
+export type QaContextResult = {
+  conversationId: string;
+  bookId: BookId;
+  userId: string;
+  createdAt: string;
+  status: string;
+  answerMode?: QaAnswerMode;
+  learningTaskId?: string | null;
+  socraticState?: string | null;
+};
+/**
+ * allowGeneralFallback：资料检索不足以回答时，是否允许改用通用模型作答。
+ * 默认 false —— 必须由用户在界面上显式确认后才置为 true，避免无出处的答案被当成教材依据。
+ * 【后端接入清单】POST /rag/conversations/{id}/messages 需接收该字段，
+ * 并在降级作答时返回 answeredByGeneralModel=true、citations=[]。
+ */
+export type QaQuestionPayload = { bookId: BookId; question: string; conversationId?: string; sources?: Source[]; allowGeneralFallback?: boolean; answerMode?: QaAnswerMode; learningTaskId?: string | null };
+export type QaResult = {
+  answer: string;
+  refused: boolean;
+  citations: Source[];
+  relatedKnowledgePoints?: string[];
+  recommendedAction?: string;
+  conversationId?: string;
+  requestId?: string;
+  answeredByGeneralModel?: boolean;
+  answerMode?: QaAnswerMode;
+  learningTaskId?: string | null;
+  socraticState?: string | null;
+  responseQuality?: string | null;
+  socraticCompleted?: boolean;
+};
 export type MaterialLearningPlanPayload = { bookId: BookId; title: string; goal: string; description: string; minutes: number; expectedCompletionDate: string; resources: Source[] };
 export type LearningActivity = {
   id: string;
@@ -143,11 +203,16 @@ export const mockApi = {
     const goal = mockGoals.get(bookId);
     return goal ? { exists: true, goal } : { exists: false };
   },
-  async createConversation(bookId: BookId): Promise<QaConversation> {
+  async initializeQaContext(bookId: BookId, _resetContext = false): Promise<QaContextResult> {
     await wait(260);
     return { conversationId: `mock-qa-${Date.now()}`, bookId, userId: "user_001", createdAt: new Date().toISOString(), status: "active" };
   },
   async startDiagnostic(bookId: BookId, _learningGoal?: string, _userId?: number, _learningPlanDayId?: number, _learningPlanItemId?: number): Promise<DiagnosticStartResult> {
+  async finishQaLearningTask(_bookId: BookId, _learningTaskId: string): Promise<{ completed: boolean }> {
+    await wait(120);
+    return { completed: true };
+  },
+  async startDiagnostic(bookId: BookId): Promise<DiagnosticStartResult> {
     await wait();
     return { diagnosticId: `demo-${bookId}-diagnostic`, questions: getBookContent(bookId).questions };
   },
@@ -229,6 +294,24 @@ export const mockApi = {
     await wait(720);
     if (payload.question.includes("接口失败")) throw { code: "QA_TEMPORARY_ERROR", message: "资料问答暂时不可用，请稍后重试。", retryable: true } satisfies ApiError;
     return { answer: "这是一个很好的追问。建议先从定义、输入条件和输出结果三个角度拆解，再结合引用资料核对关键概念。", refused: false, citations: payload.sources };
+    // 演示拒答与通用模型降级：问题含「资料外」时模拟检索不到依据。
+    if (payload.question.includes("资料外")) {
+      if (!payload.allowGeneralFallback) {
+        return { answer: "当前教材资料中没有找到能够支持该问题的内容。", refused: true, citations: [] };
+      }
+      return { answer: "（通用模型回答）这个问题超出了当前教材范围，以下内容来自通用知识，未经教材核对，请谨慎参考。", refused: false, citations: [], answeredByGeneralModel: true };
+    }
+    if (payload.answerMode === "socratic") {
+      return {
+        answer: "我们先不急着看完整答案。你认为这道题首先需要明确的核心概念是什么？",
+        refused: false,
+        citations: payload.sources,
+        answerMode: "socratic",
+        learningTaskId: payload.learningTaskId ?? `task-${Date.now()}`,
+        socraticState: "probe",
+      };
+    }
+    return { answer: "这是一个很好的追问。建议先从定义、输入条件和输出结果三个角度拆解，再结合引用资料核对关键概念。", refused: false, citations: payload.sources, answerMode: "direct" };
   },
   async getWeeklyLearningPlan(_userId: number, _bookId: number): Promise<WeeklyPlanLookup> {
     await wait(180);
@@ -283,6 +366,17 @@ export const realApi = {
   },
   createConversation: (bookId: BookId) => request<QaConversation>("/rag/conversations", { method: "POST", body: JSON.stringify({ bookId, userId: "user_001" }) }),
   startDiagnostic: (bookId: BookId, learningGoal?: string, userId?: number, learningPlanDayId?: number, learningPlanItemId?: number) => request<DiagnosticStartResult>("/diagnostics/start", { method: "POST", body: JSON.stringify({ bookId, learningGoal, userId: userId ? String(userId) : undefined, learningPlanDayId, learningPlanItemId }) }),
+  initializeQaContext: (bookId: BookId, resetContext = false) => request<QaContextResult>("/rag/conversations", {
+    method: "POST",
+    body: JSON.stringify({ bookId, userId: getCurrentUserId(), resetContext }),
+  }),
+  finishQaLearningTask: (bookId: BookId, learningTaskId: string) => request<{ completed: boolean }>(`/rag/learning-tasks/${encodeURIComponent(learningTaskId)}/finish`, {
+    method: "POST",
+    body: JSON.stringify({ bookId, userId: getCurrentUserId() }),
+  }),
+  // 诊断只在 start 这一步认人：后端把 userId 存进工作流状态，
+  // 后续 answers / finish / 校准都按 diagnosticId 找回同一个用户，不需要再传。
+  startDiagnostic: (bookId: BookId, learningGoal?: string) => request<DiagnosticStartResult>("/diagnostics/start", { method: "POST", body: JSON.stringify({ bookId, learningGoal, userId: getCurrentUserId() }) }),
   submitDiagnosticAnswer: (diagnosticId: string, payload: { questionId: string; answer: string; skipped?: boolean }) => request(`/diagnostics/${diagnosticId}/answers`, { method: "POST", body: JSON.stringify(payload) }),
   finishDiagnostic: (diagnosticId: string) => request<DiagnosticResult>(`/diagnostics/${diagnosticId}/finish`, { method: "POST" }),
   submitCalibration: (payload: { diagnosticId: string; level: string; reason: string }) => request("/learner-calibrations", { method: "POST", body: JSON.stringify(payload) }),
@@ -307,6 +401,13 @@ export const realApi = {
   completeWeeklyPlanItem: (itemId: number, userId: number) => request<{ item_id: number; status: string }>(`/learning-plans/weekly/items/${itemId}/complete`, { method: "POST", body: JSON.stringify({ userId }) }),
   getProfileSetup: (userId: number, bookId: number) => request<ProfileSetupResult>(`/learner-profile/setup?user_id=${userId}&book_id=${bookId}`),
   saveProfileSetup: (payload: ProfileSetupPayload) => request<ProfileSetupResult>("/learner-profile/setup", { method: "POST", body: JSON.stringify(payload) }),
+  askQuestion: (payload: QaQuestionPayload) => request<QaResult>(`/rag/conversations/${encodeURIComponent(payload.conversationId ?? "")}/messages`, { method: "POST", body: JSON.stringify({ bookId: payload.bookId, question: payload.question, userId: getCurrentUserId(), allowGeneralFallback: payload.allowGeneralFallback ?? false, answerMode: payload.answerMode ?? "direct", learningTaskId: payload.learningTaskId ?? null }) }),
+  getLearnerProfile: (userId: string, learningDomain: string) => request<LearnerProfileResult>(`/learner-profile?user_id=${encodeURIComponent(userId)}&learning_domain=${encodeURIComponent(learningDomain)}`),
+  getKnowledgePoints: (learningDomain: string) => request<KnowledgePointResult>(`/learner-profile/knowledge-points?learning_domain=${encodeURIComponent(learningDomain)}`),
+  saveLearnerProfile: async (payload: LearnerProfilePayload) => {
+    const started = await request<LearnerProfileWorkflowStart>("/learner-profile/workflows", { method: "POST", body: JSON.stringify(payload) });
+    return request<LearnerProfileResult>(`/learner-profile/workflows/${encodeURIComponent(started.workflowId)}/review`, { method: "POST", body: JSON.stringify({ action: "approve" }) });
+  },
 };
 
 export const api = USE_REAL_API ? realApi : mockApi;

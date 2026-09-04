@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from pathlib import Path
 
+from sqlalchemy.engine import Engine
+
 from modules.common import api as common_api
 from modules.diagnosis.agent import DiagnosticAgent
 from modules.diagnosis.services import AssessmentService, DiagnosisResultStore, GeneratedQuestionBank
@@ -9,12 +11,23 @@ from modules.diagnosis.repository import MySqlDiagnosisRepository
 from modules.learner_profile.agent import CurrentMasteryAssessmentAgent, GoalKnowledgeRequirementAgent
 from modules.learner_profile.module import MySqlLearnerProfileModule
 from modules.learner_profile.repository import MySqlLearnerProfileRepository
+from modules.common.database import create_mysql_engine
+from modules.auth.module import AuthModule
+from modules.auth.repository import MysqlAccountStore
+from modules.diagnosis.agent import DiagnosticAgent
+from modules.diagnosis.services import AssessmentService, DiagnosisResultStore, GeneratedQuestionBank
+from modules.diagnosis.workflow import DiagnosisWorkflow
+from modules.learner_goals.module import LearnerGoalModule
+from modules.learner_goals.repository import MysqlLearnerGoalRepository
+from modules.learner_profile.workflow import JsonLearnerProfileRepository, LearnerProfileWorkflow
 from modules.learning_plan.module import LearningPlanModule
 from modules.learning_plan.pace import LearningPaceAgent
 from modules.learning_plan.repository import MySqlLearningPlanRepository
 from modules.learning_record.module import LearningRecordModule
 from modules.material_qa.agent import MaterialQaAgent
 from modules.material_qa.services import MarkdownMaterialRetriever, QdrantMaterialRetriever, ResilientMaterialRetriever
+from modules.material_qa.repository import MysqlMaterialQaMessageStore
+from modules.material_qa.services import QdrantMaterialRetriever
 from modules.material_qa.workflow import MaterialQaWorkflow
 from sdk.llm_client import DeepSeekLLMClient
 
@@ -26,6 +39,12 @@ class ApiDependencies:
     learning_plan: LearningPlanModule
     material_qa: MaterialQaWorkflow
     learning_record: LearningRecordModule
+    today_learning: TodayLearningModule
+    # 学习目标：只读写本地 JSON，没有需要预热或关闭的资源。
+    learner_goals: LearnerGoalModule
+    # 认证：同上，启动时会确保体验账号存在。
+    auth: AuthModule
+    database_engine: Engine
 
     def start(self) -> None:
         """预热应用级资源，避免首个请求承担模型加载成本。"""
@@ -36,10 +55,26 @@ class ApiDependencies:
         """关闭应用级资源，尤其是 Qdrant 本地存储客户端。"""
 
         self.material_qa.close()
+        self.database_engine.dispose()
 
 
 def build_api_dependencies(settings: common_api.config.Settings | None = None) -> ApiDependencies:
     settings = settings or common_api.config.Settings.from_env()
+    database_engine = create_mysql_engine(settings)
+    profile_reader = common_api.json_storage.JsonContentReader(
+        settings.profile_path
+    )
+    profile_repository = JsonLearnerProfileRepository(
+        profile_reader,
+        common_api.json_storage.JsonStore(),
+    )
+    memory_reader = common_api.json_storage.JsonContentReader(settings.memory_path)
+    memory_module = MemoryModule(
+        JsonMemoryRepository(
+            reader=memory_reader,
+            store=common_api.json_storage.JsonStore(),
+        )
+    )
     knowledge_point_catalog = common_api.knowledge_points.JsonKnowledgePointCatalog(settings.knowledge_points_dir)
     profile_workflow = MySqlLearnerProfileModule(
         MySqlLearnerProfileRepository.from_env(),
@@ -71,6 +106,25 @@ def build_api_dependencies(settings: common_api.config.Settings | None = None) -
             embedding_model=settings.embedding_model,
         ),
         fallback=MarkdownMaterialRetriever(documents=material_documents),
+    learner_goal_module = LearnerGoalModule(
+        repository=MysqlLearnerGoalRepository(database_engine)
+    )
+    learning_plan_module = LearningPlanModule(
+        result_repository,
+        LearningPlanAgent(DeepSeekLLMClient.from_env()),
+        memory=memory_module,
+        learner_profile=profile_workflow,
+        learner_goals=learner_goal_module,
+        learning_record=learning_record_module,
+    )
+    today_learning_module = TodayLearningModule(learning_plan_module, learning_record_module, diagnosis_workflow)
+    material_qa_retriever = QdrantMaterialRetriever(
+        documents={
+            "ml": settings.new_material_dir / "ML-For-Beginners" / "lessons",
+            "dl": settings.new_material_dir / "AI-For-Beginners" / "lessons",
+        },
+        qdrant_path=settings.qdrant_path,
+        embedding_model=settings.embedding_model,
     )
 
     return ApiDependencies(
@@ -81,8 +135,16 @@ def build_api_dependencies(settings: common_api.config.Settings | None = None) -
             agent=MaterialQaAgent(DeepSeekLLMClient.from_env()),
             activity_recorder=learning_record_module,
             retriever=material_qa_retriever,
+            message_store=MysqlMaterialQaMessageStore(database_engine),
         ),
         learning_record=learning_record_module,
+        today_learning=today_learning_module,
+        learner_goals=learner_goal_module,
+        auth=AuthModule(
+            store=MysqlAccountStore(database_engine),
+            seed_demo_account=False,
+        ),
+        database_engine=database_engine,
     )
 
 

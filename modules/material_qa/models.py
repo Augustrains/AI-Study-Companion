@@ -7,6 +7,9 @@ from typing import Literal
 from .schemas import MaterialQaSource
 
 MessageRole = Literal["user", "assistant"]
+AnswerMode = Literal["direct", "socratic"]
+SocraticStateName = Literal["probe", "clarify", "confront", "scaffold", "confirm"]
+ResponseQuality = Literal["correct", "partial", "wrong", "confused", "no_response"]
 
 
 @dataclass
@@ -16,6 +19,23 @@ class MaterialQaMessage:
     role: MessageRole
     content: str
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    answer_mode: AnswerMode = "direct"
+    learning_task_id: str | None = None
+    socratic_state: SocraticStateName | None = None
+    response_quality: ResponseQuality | None = None
+    socratic_completed: bool = False
+
+
+@dataclass(frozen=True)
+class MaterialQaLearningTask:
+    """Persisted state for one explicitly started Socratic learning task."""
+
+    learning_task_id: str
+    root_question: str
+    state: SocraticStateName
+    turns_in_state: int = 0
+    completed: bool = False
+    last_assistant_message: str = ""
 
 
 @dataclass
@@ -27,6 +47,7 @@ class MaterialQaConversation:
     user_id: str
     created_at: str
     messages: list[MaterialQaMessage] = field(default_factory=list)
+    active_learning_task: MaterialQaLearningTask | None = None
 
 
 @dataclass(frozen=True)
@@ -64,6 +85,11 @@ class MaterialQaAgentInput:
     retrieval: MaterialQaRetrievalResult
     # 检索不足时是否允许改用通用模型作答（由 API 层透传，默认关闭）。
     allow_general_fallback: bool = False
+    answer_mode: AnswerMode = "direct"
+    learning_task_id: str | None = None
+    socratic_state: SocraticStateName | None = None
+    socratic_directive: str = ""
+    root_question: str = ""
 
 
 @dataclass(frozen=True)
@@ -77,6 +103,11 @@ class MaterialQaAgentOutput:
     recommended_action: str
     # True 表示这条回答来自通用模型、没有教材出处，前端需要单独标注。
     answered_by_general_model: bool = False
+    answer_mode: AnswerMode = "direct"
+    learning_task_id: str | None = None
+    socratic_state: SocraticStateName | None = None
+    response_quality: ResponseQuality | None = None
+    socratic_completed: bool = False
 
 
 @dataclass(frozen=True)
@@ -90,3 +121,8 @@ class MaterialQaAnswer:
     related_knowledge_points: list[str]
     recommended_action: str
     answered_by_general_model: bool = False
+    answer_mode: AnswerMode = "direct"
+    learning_task_id: str | None = None
+    socratic_state: SocraticStateName | None = None
+    response_quality: ResponseQuality | None = None
+    socratic_completed: bool = False

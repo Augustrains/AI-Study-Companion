@@ -1,0 +1,76 @@
+/* Desktop workspace: only the sidebar stays fixed. The right workspace,
+   including course controls, is one full-height scroll region. Auth is unchanged. */
+.page-content, .page-body { min-width: 0; }
+.page-content:focus-visible { outline: 2px solid #8bbce7; outline-offset: -3px; }
+
+@media (min-width: 821px) {
+  .app-shell {
+    --workspace-inline: 38px;
+    display: flex;
+    height: 100vh;
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .app-shell > .sidebar {
+    flex-shrink: 0;
+    height: 100%;
+    min-height: 0;
+    padding: 22px 18px 18px;
+    overflow: hidden;
+  }
+
+  .sidebar > .brand-lockup { flex-shrink: 0; padding-bottom: 20px; }
+  .sidebar > .main-nav {
+    flex: 1;
+    min-height: 0;
+    align-content: start;
+    gap: 5px;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    scrollbar-width: thin;
+    padding: 2px;
+  }
+  .sidebar .nav-item { min-height: 40px; padding: 8px 12px; font-size: 14px; line-height: 22px; }
+  .sidebar > .sidebar-bottom { flex-shrink: 0; margin-top: 16px; }
+
+  .app-shell > .main-content {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .page-content > .topbar {
+    min-height: 78px;
+    margin: 0;
+    padding: 20px calc(var(--workspace-inline) - 12px) 14px var(--workspace-inline);
+  }
+
+  .main-content > .page-content {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+    scroll-padding-top: 12px;
+  }
+
+  .page-content:has(.community-page) { scroll-padding-top: 60px; }
+
+  .page-content > .page-body {
+    padding: 0 calc(var(--workspace-inline) - 12px) 36px var(--workspace-inline);
+  }
+
+  .page-content::-webkit-scrollbar { width: 10px; height: 10px; }
+  .page-content::-webkit-scrollbar-thumb { border: 2px solid #f2f7ff; border-radius: 8px; background: #b6cce0; }
+  .page-content::-webkit-scrollbar-thumb:hover { background: #8cadca; }
+  .page-content::-webkit-scrollbar-track { background: #f2f7ff; }
+}
+
+@media (min-width: 821px) and (max-width: 1100px) {
+  .app-shell { --workspace-inline: 24px; }
+}

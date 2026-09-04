@@ -1,4 +1,4 @@
-export type NavKey = "today" | "diagnostic" | "plan" | "records" | "qa" | "profile" | "goals" | "settings" | "resources" | "help";
+export type NavKey = "today" | "diagnostic" | "plan" | "records" | "qa" | "profile" | "goals" | "settings" | "resources" | "help" | "community";
 export type TaskStatus = "completed" | "in_progress" | "todo" | "review_due" | "skipped" | "rescheduled";
 /** 书籍 ID 由后端目录接口（GET /books）提供，前端不再限定取值。 */
 export type BookId = string;

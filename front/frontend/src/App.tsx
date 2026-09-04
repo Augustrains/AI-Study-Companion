@@ -2,6 +2,17 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Icon, type IconName } from "./components/Icon";
 import { LearnerProfileView } from "./components/LearnerProfileView";
 import { api, type ApiError, type DiagnosticResult, type LearningActivity, type LearningPlanResult, type ReadingMaterials, type TodayLearningResponse, type WeeklyPlan, type WeeklyPlanItem } from "./services/api";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { Icon, type IconName } from "./components/Icon";
+import { LearnerProfileView } from "./components/LearnerProfileView";
+import { AuthView } from "./components/AuthView";
+import { GoalsSetupView } from "./components/GoalsSetupView";
+import { SettingsView } from "./components/SettingsView";
+import { InlineResources, LearningResourcesView } from "./components/LearningResources";
+import { HelpCenterView } from "./components/HelpCenter";
+import { CommunityView } from "./components/CommunityView";
+import { auth, getSession, type AuthUser } from "./services/session";
+import { api, type ApiError, type BookCatalogItem, type DiagnosticResult, type LearningActivity, type LearningPlanResult, type PlanTimeBudget, type QaAnswerMode, type TodayLearningResponse } from "./services/api";
 import {
   books,
   getBookContent,
@@ -18,6 +29,21 @@ import {
 type Toast = { title: string; message: string } | null;
 type Calibration = "lower" | "same" | "higher";
 type QaMessage = { role: "user" | "assistant"; text: string; citations?: Source[] };
+type QaMessage = {
+  role: "user" | "assistant";
+  text: string;
+  citations?: Source[];
+  /** 资料检索不足、后端拒答；此时提供「用通用模型回答」入口 */
+  refused?: boolean;
+  /** 该回答来自通用模型，没有教材出处，需要显著区分 */
+  fromGeneralModel?: boolean;
+  /** 触发这条回答的原始问题，用于降级重问 */
+  question?: string;
+  answerMode?: QaAnswerMode;
+  socraticState?: string | null;
+  responseQuality?: string | null;
+  socraticCompleted?: boolean;
+};
 type ModalState = {
   title: string;
   subtitle?: string;
@@ -59,6 +85,8 @@ const navigation: Array<{ key: NavKey; label: string; icon: IconName }> = [
   { key: "plan", label: "学习计划", icon: "calendar" },
   { key: "records", label: "学习记录", icon: "chart" },
   { key: "qa", label: "资料问答", icon: "chat" },
+  { key: "resources", label: "学习资源", icon: "spark" },
+  { key: "community", label: "学习社区", icon: "users" },
 ];
 
 const statusLabels: Record<TaskStatus, string> = {
@@ -74,6 +102,7 @@ const errorMessage = (error: unknown) => (error as ApiError)?.message ?? "操作
 
 function App() {
   const [activeNav, setActiveNav] = useState<NavKey>("today");
+  const pageContentRef = useRef<HTMLDivElement>(null);
   const [bookId, setBookId] = useState<BookId>(books[0].id);
   const [toast, setToast] = useState<Toast>(null);
   const [modal, setModal] = useState<ModalState | null>(null);
@@ -88,6 +117,11 @@ function App() {
   const [todayLearning, setTodayLearning] = useState<TodayLearningResponse | null>(null);
   const [planTab, setPlanTab] = useState<"overview" | "knowledge">("overview");
   const [goalLevel, setGoalLevel] = useState("能够独立完成基础练习");
+
+  // Each page starts at the top without remounting its forms or resetting learning state.
+  useEffect(() => {
+    pageContentRef.current?.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, [activeNav, bookId]);
 
   const [diagnosticStage, setDiagnosticStage] = useState<"question" | "result">("question");
   const [diagnosticIndex, setDiagnosticIndex] = useState(0);
@@ -115,8 +149,11 @@ function App() {
   const [qaError, setQaError] = useState<string | null>(null);
   const [qaMessages, setQaMessages] = useState<QaMessage[]>([]);
   const [qaSources, setQaSources] = useState<Source[]>([]);
-  const [qaConversationId, setQaConversationId] = useState<string | null>(null);
-  const [qaConversationBusy, setQaConversationBusy] = useState(false);
+  // 该令牌只用于兼容现有接口；持久化上下文由 userId + bookId + reset 标记决定。
+  const [qaContextToken, setQaContextToken] = useState<string | null>(null);
+  const [qaContextBusy, setQaContextBusy] = useState(false);
+  const [qaAnswerMode, setQaAnswerMode] = useState<QaAnswerMode>("direct");
+  const [qaLearningTaskId, setQaLearningTaskId] = useState<string | null>(null);
 
   const currentBook = useMemo(() => books.find((book) => book.id === bookId) ?? books[0], [bookId]);
   const content = useMemo(() => getBookContent(bookId), [bookId]);
@@ -148,24 +185,67 @@ function App() {
 
   const closeModal = () => setModal(null);
 
-  const initializeQaConversation = async (nextBookId: BookId) => {
-    setQaConversationBusy(true);
-    setQaConversationId(null);
+  const initializeQaContext = async (nextBookId: BookId, resetContext = false) => {
+    setQaContextBusy(true);
+    setQaContextToken(null);
     setQaMessages([]);
     setQaSources([]);
     setQaError(null);
     try {
-      const conversation = await api.createConversation(nextBookId);
-      setQaConversationId(conversation.conversationId);
+      const context = await api.initializeQaContext(nextBookId, resetContext);
+      setQaContextToken(context.conversationId);
+      setQaAnswerMode(context.answerMode ?? "direct");
+      setQaLearningTaskId(context.learningTaskId ?? null);
+      if (resetContext) showToast("已清空对话", "之后的回答不会再使用此前的问答内容。");
     } catch (error) {
       setQaError(errorMessage(error));
     } finally {
-      setQaConversationBusy(false);
+      setQaContextBusy(false);
     }
   };
 
+  const clearQaContext = () => {
+    if (qaBusy) {
+      showToast("暂时不能清空", "请等待当前回答完成后再清空对话。");
+      return;
+    }
+    if (qaContextBusy) return;
+    void initializeQaContext(bookId, true);
+  };
+
+  const changeQaAnswerMode = async (mode: QaAnswerMode) => {
+    if (qaBusy || qaContextBusy) return;
+    if (mode === qaAnswerMode) return;
+    if (qaLearningTaskId) {
+      try {
+        await api.finishQaLearningTask(bookId, qaLearningTaskId);
+      } catch (error) {
+        showToast("切换失败", errorMessage(error));
+        return;
+      }
+    }
+    setQaAnswerMode(mode);
+    // Choosing a mode starts a fresh teaching task without erasing chat history.
+    setQaLearningTaskId(null);
+    setQaError(null);
+  };
+
+  const finishSocraticTask = async () => {
+    if (qaBusy) return;
+    if (qaLearningTaskId) {
+      try {
+        await api.finishQaLearningTask(bookId, qaLearningTaskId);
+      } catch (error) {
+        showToast("结束引导失败", errorMessage(error));
+        return;
+      }
+    }
+    setQaLearningTaskId(null);
+    showToast("已结束本轮引导", "下一次提问将开始一个新的学习任务。");
+  };
+
   useEffect(() => {
-    void initializeQaConversation(books[0].id);
+    void initializeQaContext(books[0].id);
   }, []);
 
   useEffect(() => {
@@ -196,6 +276,96 @@ function App() {
     return () => { active = false; };
   }, [bookId]);
 
+  // 书籍目录来自 GET /books（未就绪时服务层自动回退本地目录）。
+  useEffect(() => {
+    if (!user) return;
+    let active = true;
+    void api.getBooks()
+      .then((result) => { if (active) setBookCatalog(result.books.filter((book) => book.available !== false)); })
+      .catch(() => { if (active) setBookCatalog([]); });
+    return () => { active = false; };
+  }, [user]);
+
+  // 拉取知识点名称，供「学习资源」页把 ID 显示成中文名。
+  useEffect(() => {
+    if (!user) return;
+    let active = true;
+    void api.getKnowledgePoints("machine_learning")
+      .then((result) => {
+        if (!active) return;
+        setKnowledgePointNames(Object.fromEntries(result.knowledgePoints.map((point) => [point.id, point.name])));
+      })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, [user]);
+
+  // 登录后若尚未建立学习目标，先进入「选书与目标」引导。
+  useEffect(() => {
+    if (!user) return;
+    const saved = readSavedGoal(user.userId);
+    if (saved) {
+      setBookId(saved.bookId);
+      setGoalLevel(saved.targetLevel);
+    } else {
+      setActiveNav("goals");
+    }
+  }, [user]);
+
+  const handleAuthenticated = (nextUser: AuthUser) => {
+    setUser(nextUser);
+    setActiveNav("today");
+  };
+
+  /** 侧边栏退出登录：先确认，避免误触丢掉当前会话。 */
+  const handleLogoutClick = async () => {
+    setModal({
+      title: "退出登录",
+      subtitle: user ? `当前账号：${user.nickname}（${user.account}）` : undefined,
+      content: <p style={{ margin: 0, color: "var(--muted)", fontSize: 12.5, lineHeight: 1.7 }}>
+        退出后需要重新登录才能继续学习。想切换到体验账号的话，退出后用 <strong>demo@study.local</strong> / <strong>demo1234</strong> 登录即可。
+      </p>,
+      secondary: { label: "取消", onClick: closeModal },
+      primary: { label: "确认退出", onClick: async () => { closeModal(); await auth.logout(); handleLogout(); } },
+    });
+  };
+
+  const handleLogout = () => {
+    setUser(null);
+    setActiveNav("today");
+    setGeneratedPlan(null);
+    setTodayLearning(null);
+    setRecords([]);
+  };
+
+  const handleGoalSaved = (result: { bookId: string; targetLevel: string; dailyMinutes: number; targetDate: string; rescheduled?: boolean; estimatedDays?: number | null; planRefreshSuggested?: boolean }) => {
+    if (user) {
+      try {
+        window.localStorage.setItem(goalStorageKey(user.userId), JSON.stringify(result));
+      } catch {
+        // 本地存储不可用时不阻断流程，仅本次会话生效。
+      }
+    }
+    setGoalLevel(result.targetLevel);
+    resetBookState(result.bookId);
+    setActiveNav("today");
+    // 三种情况分开说，别用一句「已保存」把后端到底做了什么盖住。
+    if (result.planRefreshSuggested) {
+      showToast(
+        "目标水平已更新",
+        "任务日期已按新的时长重排。不过目标水平变了，任务内容本身要重做一次诊断才会跟着变——重新生成会清掉当前计划的完成进度，所以交给你决定。",
+      );
+    } else if (result.rescheduled) {
+      showToast(
+        "学习目标已保存",
+        result.estimatedDays
+          ? `已按新的每日时长重排学习计划，预计 ${result.estimatedDays} 天完成。`
+          : "已按新的每日时长重排学习计划。",
+      );
+    } else {
+      showToast("学习目标已保存", "可以开始能力诊断，或先查看今日学习。");
+    }
+  };
+
   const changeRecordFilter = (filter: "all" | RecordItem["category"]) => {
     setRecordPage(1);
     setRecordFilter(filter);
@@ -217,7 +387,7 @@ function App() {
     setDiagnosticResult(null);
     setCalibration(null);
     setCalibrationReason("");
-    void initializeQaConversation(nextBookId);
+    void initializeQaContext(nextBookId);
     showToast("已切换学习内容", `${getBookContent(nextBookId).goal}的页面内容已更新。`);
   };
 
@@ -520,11 +690,11 @@ function App() {
 
   const askQuestion = async () => {
     const question = qaInput.trim();
-    if (!question || qaBusy || qaConversationBusy) {
+    if (!question || qaBusy || qaContextBusy) {
       if (!question) showToast("请输入问题", "输入问题后再发送。 ");
       return;
     }
-    if (!qaConversationId) {
+    if (!qaContextToken) {
       setQaError("问答会话尚未创建完成，请稍后重试。");
       return;
     }
@@ -537,6 +707,37 @@ function App() {
       setQaSources(result.citations);
       setQaMessages((messages) => [...messages, { role: "assistant", text: question.includes("过拟合") ? content.qaAnswer : result.answer, citations: result.citations }]);
       setQaMessages((messages) => [...messages.slice(0, -1), { role: "assistant", text: result.answer, citations: result.citations }]);
+      const result = await api.askQuestion({
+        bookId,
+        question,
+        conversationId: qaContextToken ?? undefined,
+        sources: content.sources,
+        allowGeneralFallback,
+        answerMode: allowGeneralFallback ? "direct" : qaAnswerMode,
+        learningTaskId: allowGeneralFallback ? null : qaLearningTaskId,
+      });
+      if (!result.refused) setQaSources(result.citations);
+      const fromGeneralModel = Boolean(result.answeredByGeneralModel) || (allowGeneralFallback && !result.refused && result.citations.length === 0);
+      setQaMessages((messages) => [...messages, {
+        role: "assistant",
+        text: result.answer,
+        citations: result.refused ? [] : result.citations,
+        refused: result.refused,
+        fromGeneralModel,
+        question,
+        answerMode: result.answerMode ?? qaAnswerMode,
+        socraticState: result.socraticState,
+        responseQuality: result.responseQuality,
+        socraticCompleted: result.socraticCompleted,
+      }]);
+      if (result.answerMode === "socratic") {
+        setQaLearningTaskId(result.socraticCompleted ? null : (result.learningTaskId ?? null));
+        if (result.socraticCompleted) showToast("本轮引导已完成", "你已经通过了迁移验证，可以开始新的问题。");
+      }
+      if (allowGeneralFallback && result.refused) {
+        // 后端尚未实现 allowGeneralFallback 时会再次拒答，如实告知而不是静默失败。
+        setQaError("后端暂不支持通用模型回答（需实现 allowGeneralFallback 参数）。");
+      }
     } catch (error) {
       setQaError(errorMessage(error));
     } finally {
@@ -555,11 +756,38 @@ function App() {
       <main className="main-content">
         <header className="topbar"><div className="mobile-brand"><div className="brand-mark"><Icon name="book-open" size={20} /></div></div><div className="topbar-context"><span className="context-label">当前学习内容</span><label className="book-select"><Icon name="book" size={18} /><select value={bookId} onChange={(event) => resetBookState(event.target.value as BookId)} aria-label="选择当前学习内容">{books.map((book) => <option key={book.id} value={book.id}>{book.title}</option>)}</select><Icon name="chevron-down" size={15} /></label></div></header>
         {activeNav === "today" && <TodayView book={currentBook} content={content} tasks={currentTasks} dashboard={todayLearning} goTo={goTo} startDiagnostic={startDiagnostic} onOpenTask={openTask} onOpenKnowledge={openKnowledgeDetail} onOpenRecords={() => goTo("records")} />}
+        <nav className="main-nav" aria-label="主导航">{navigation.map((item) => <button className={`nav-item ${activeNav === item.key ? "active" : ""}`} key={item.key} aria-label={item.label} title={item.label} onClick={() => goTo(item.key)}><Icon name={item.icon} size={19} /><span>{item.label}</span></button>)}</nav>
+        <div className="sidebar-bottom"><button className={`nav-item ${activeNav === "goals" ? "active" : ""}`} onClick={() => setActiveNav("goals")}><Icon name="target" size={19} /><span>选书与目标</span></button><button className={`nav-item ${activeNav === "settings" ? "active" : ""}`} onClick={() => setActiveNav("settings")}><Icon name="settings" size={19} /><span>设置</span></button><button className={`nav-item ${activeNav === "help" ? "active" : ""}`} onClick={() => setActiveNav("help")}><Icon name="help" size={19} /><span>帮助</span></button>
+          <div className="sidebar-user">
+            <button className="sidebar-user-main" onClick={() => setActiveNav("settings")} title="账户设置">
+              <span className="sidebar-avatar">{user.nickname.slice(0, 1).toUpperCase()}</span>
+              <span className="sidebar-user-meta"><strong>{user.nickname}</strong><span>{user.account}</span></span>
+            </button>
+            <button className="sidebar-logout" onClick={() => void handleLogoutClick()} title="退出登录" aria-label="退出登录">
+              <Icon name="log-out" size={16} />
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      <main className="main-content">
+        <div className="page-content" ref={pageContentRef} role="region" aria-label="页面内容" tabIndex={0}>
+        <header className="topbar"><div className="mobile-brand"><div className="brand-mark"><Icon name="book-open" size={20} /></div></div><div className="topbar-context"><span className="context-label">当前学习内容</span><label className="book-select"><Icon name="book" size={18} /><select value={bookId} onChange={(event) => resetBookState(event.target.value as BookId)} aria-label="选择当前学习内容">{bookOptions.map((book) => <option key={book.id} value={book.id}>{book.title}</option>)}</select><Icon name="chevron-down" size={15} /></label></div></header>
+        <div className="page-body">
+        {activeNav === "today" && <TodayView book={currentBook} content={content} tasks={currentTasks} dashboard={todayDashboard} goTo={goTo} startDiagnostic={startDiagnostic} onOpenTask={openTask} onOpenKnowledge={openKnowledgeDetail} onOpenRecords={() => goTo("records")} />}
         {activeNav === "profile" && <LearnerProfileView bookId={bookId} />}
         {activeNav === "diagnostic" && <DiagnosticView questions={diagnosticQuestions} index={diagnosticIndex} answers={diagnosticAnswers} skippedQuestions={skippedQuestions} paused={diagnosticPaused} busy={diagnosticBusy} stage={diagnosticStage} result={diagnosticResult} calibration={calibration} calibrationReason={calibrationReason} updatesPlan={Boolean(diagnosticPlanDayId)} setAnswer={(id) => currentQuestion && setDiagnosticAnswers((answers) => ({ ...answers, [currentQuestion.id]: id }))} onPrevious={() => setDiagnosticIndex((index) => Math.max(0, index - 1))} onSubmit={submitDiagnostic} onSkip={skipDiagnostic} onPause={() => setDiagnosticPaused(true)} onResume={resumeDiagnostic} onCalibration={setCalibration} onReason={setCalibrationReason} onEvidence={openEvidence} onCalibrationSubmit={submitCalibration} />}
         {activeNav === "plan" && (weeklyPlan ? <WeeklyPlanView plan={weeklyPlan} book={currentBook} onOpenItem={openWeeklyItem} isUnlocked={isWeeklyItemUnlocked} onRegenerate={() => void generateWeeklyPlan()} busy={weeklyPlanLoading} /> : <PlanEmptyView onStartDiagnostic={startDiagnostic} onGenerate={() => void generateWeeklyPlan()} hasUser={Boolean(databaseUserId)} busy={weeklyPlanLoading} />)}
         {activeNav === "records" && <RecordsView records={records} total={recordTotal} page={recordPage} pageSize={recordPageSize} loading={recordsLoading} filter={recordFilter} setFilter={changeRecordFilter} onPageChange={setRecordPage} onOpenRecord={openRecord} onReview={() => startDiagnostic()} />}
         {activeNav === "qa" && <QaView book={currentBook} sources={qaSources} messages={qaMessages} value={qaInput} busy={qaBusy} error={qaError} onChange={setQaInput} onAsk={askQuestion} onNew={() => void initializeQaConversation(bookId)} onOpenSource={openSource} onAddPlan={openMaterialPlanEditor} />}
+        {activeNav === "goals" && <GoalsSetupView initialBookId={bookId} onSaved={handleGoalSaved} onSkip={() => setActiveNav("today")} />}
+        {activeNav === "settings" && <SettingsView user={user} onUserUpdated={setUser} onLogout={handleLogout} />}
+        {activeNav === "resources" && <LearningResourcesView knowledgePointNames={knowledgePointNames} />}
+        {activeNav === "help" && <HelpCenterView onNavigate={goTo} />}
+        {activeNav === "community" && <CommunityView key={user.userId} userId={user.userId} nickname={user.nickname} course={currentBook.shortTitle} />}
+        {activeNav === "qa" && <QaView book={currentBook} sources={qaSources} messages={qaMessages} value={qaInput} busy={qaBusy} error={qaError} onChange={setQaInput} onAsk={askQuestion} onNew={() => void initializeQaConversation(bookId)} onOpenSource={openSource} onAddPlan={openMaterialPlanEditor} onAskGeneral={askWithGeneralModel} relatedKnowledgePointIds={(todayLearning?.knowledgeGraph.nodes ?? []).filter((node) => node.status === "weak").map((node) => node.id)} />}
+        </div>
+        </div>
       </main>
 
       {toast && <div className="toast" role="status"><div className="toast-icon"><Icon name="check" size={17} /></div><div><strong>{toast.title}</strong><span>{toast.message}</span></div></div>}
@@ -679,6 +907,11 @@ function QaView({ book, sources, messages, value, busy, error, onChange, onAsk, 
   const sourceBookTitle = (source: Source) => books.find((item) => item.id === source.bookId)?.title ?? book.title;
   const uniqueSources = mergeSourcesByChapter(sources);
   return <div className="page-stack"><PageHeader eyebrow="资料驱动 · 保留引用" title="资料问答" description="围绕当前学习内容和学习目标提问，回答会保留资料出处。" action={<button className="outline-button" onClick={onNew}>新建对话 <Icon name="plus" size={15} /></button>} /><section className="qa-layout"><article className="card conversation-card"><div className="conversation-head"><div><span className="section-label">当前范围</span><strong>{book.title} · {book.subtitle}</strong></div><span className="status-pill blue">已绑定知识点</span></div><div className="message-list">{messages.map((message, index) => <div className={`message ${message.role}`} key={`${message.role}-${index}`}><span className="message-avatar">{message.role === "assistant" ? "✦" : "我"}</span><div><p>{message.text}</p>{message.role === "assistant" && <div className="citation-row">{mergeSourcesByChapter(message.citations ?? sources).map((source) => <button key={sourceChapterKey(source)} onClick={() => onOpenSource(source)}><Icon name="file" size={14} /><span><strong>{sourceBookTitle(source)} · {source.contentUnitId || source.title}</strong><small>{source.location}</small></span><Icon name="chevron-right" size={14} /></button>)}</div>}</div></div>)}{busy && <div className="message assistant"><span className="message-avatar">✦</span><div className="typing-state">正在查找相关资料…</div></div>}{error && <div className="inline-error" role="alert"><Icon name="info" size={16} /><span>{error}</span><button onClick={onAsk}>重新发送</button></div>}</div><div className="chat-composer"><textarea value={value} onChange={(event) => onChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); onAsk(); } }} placeholder="继续提问（Shift + Enter 换行）" rows={2} /><button className="send-button" onClick={onAsk} disabled={busy} aria-label="发送问题"><Icon name="send" size={17} /></button></div><div className="suggestion-row"><button onClick={() => onChange("这个概念如何举例？")}>这个概念如何举例？</button><button onClick={() => onChange("需要哪些前置知识？")}>需要哪些前置知识？</button></div></article><aside className="card source-card"><div className="card-heading"><span>来源详情</span><Icon name="info" size={17} /></div>{uniqueSources.length === 0 ? <div className="source-empty">提问后显示检索到的资料来源</div> : uniqueSources.map((source) => <button className="source-block" key={sourceChapterKey(source)} onClick={() => onOpenSource(source)}><Icon name="file" size={15} /><strong>{sourceBookTitle(source)} · {source.contentUnitId || source.title}</strong></button>)}{uniqueSources.length > 0 && <button className="secondary-button full" onClick={onAddPlan}>加入学习计划 <Icon name="plus" size={15} /></button>}</aside></section></div>;
+function QaView({ book, sources, messages, value, busy, error, answerMode, hasActiveLearningTask, onAnswerModeChange, onFinishSocraticTask, onChange, onAsk, onNew, onOpenSource, onAddPlan, onAskGeneral, relatedKnowledgePointIds }: { book: Book; sources: Source[]; messages: QaMessage[]; value: string; busy: boolean; error: string | null; answerMode: QaAnswerMode; hasActiveLearningTask: boolean; onAnswerModeChange: (mode: QaAnswerMode) => void; onFinishSocraticTask: () => void; onChange: (value: string) => void; onAsk: () => void; onNew: () => void; onOpenSource: (source: Source) => void; onAddPlan: () => void; onAskGeneral: (question: string) => void; relatedKnowledgePointIds: string[] }) {
+  const sourceBookTitle = (source: Source) => books.find((item) => item.id === source.bookId)?.title ?? book.title;
+  const uniqueSources = mergeSourcesByChapter(sources);
+  // 清空会写入上下文重置标记；回答生成期间禁止清空，避免在途回答越过重置边界。
+  return <div className="page-stack"><PageHeader eyebrow="资料驱动 · 保留引用" title="资料问答" description="围绕当前学习内容和学习目标提问，回答会保留资料出处。" action={<button className="outline-button" onClick={onNew} title="清空当前对话，重新开始一轮提问">清空对话 <Icon name="trash" size={15} /></button>} /><section className="qa-layout"><article className="card conversation-card"><div className="conversation-head"><div><span className="section-label">当前范围</span><strong>{book.title} · {book.subtitle}</strong></div><span className="status-pill blue">已绑定知识点</span></div><div className="qa-mode-bar"><div className="qa-mode-switch" aria-label="回答方式"><button className={answerMode === "direct" ? "active" : ""} onClick={() => onAnswerModeChange("direct")} disabled={busy}>直接回答</button><button className={answerMode === "socratic" ? "active" : ""} onClick={() => onAnswerModeChange("socratic")} disabled={busy}>引导作答</button></div><span>{answerMode === "socratic" ? "每轮只给一个问题或提示，不直接泄露完整答案" : "直接根据教材给出有出处的回答"}</span>{answerMode === "socratic" && hasActiveLearningTask && <button className="qa-finish-task" onClick={onFinishSocraticTask} disabled={busy}>结束本轮引导</button>}</div><div className="message-list">{messages.map((message, index) => <div className={`message ${message.role}`} key={`${message.role}-${index}`}><span className="message-avatar">{message.role === "assistant" ? "✦" : "我"}</span><div>{message.fromGeneralModel && <div className="general-model-tag"><Icon name="alert" size={13} />此回答来自通用模型，未经教材验证，不计入学习记录</div>}{message.role === "assistant" && message.answerMode === "socratic" && <div className="socratic-tag">引导作答{message.socraticCompleted ? " · 已完成" : ""}</div>}<p className={message.fromGeneralModel ? "general-model-answer" : undefined}>{message.text}</p>{message.role === "assistant" && message.refused && message.answerMode !== "socratic" && <div className="qa-fallback"><span>资料里没有找到能支持这个问题的依据。</span><button type="button" onClick={() => onAskGeneral(message.question ?? "")} disabled={!message.question}>用通用模型回答（无教材引用）</button><InlineResources knowledgePointIds={relatedKnowledgePointIds} title="或者看看这些资料" /></div>}{message.role === "assistant" && !message.refused && !message.fromGeneralModel && <div className="citation-row">{mergeSourcesByChapter(message.citations ?? sources).map((source) => <button key={sourceChapterKey(source)} onClick={() => onOpenSource(source)}><Icon name="file" size={14} /><span><strong>{sourceBookTitle(source)} · {source.contentUnitId || source.title}</strong><small>{source.location}</small></span><Icon name="chevron-right" size={14} /></button>)}</div>}</div></div>)}{busy && <div className="message assistant"><span className="message-avatar">✦</span><div className="typing-state">{answerMode === "socratic" ? "正在判断下一步引导…" : "正在查找相关资料…"}</div></div>}{error && <div className="inline-error" role="alert"><Icon name="info" size={16} /><span>{error}</span><button onClick={onAsk}>重新发送</button></div>}</div><div className="chat-composer"><textarea value={value} onChange={(event) => onChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); onAsk(); } }} placeholder={answerMode === "socratic" ? (hasActiveLearningTask ? "回答导师的问题（Shift + Enter 换行）" : "输入一道题，开始引导作答") : "继续提问（Shift + Enter 换行）"} rows={2} /><button className="send-button" onClick={onAsk} disabled={busy} aria-label="发送问题"><Icon name="send" size={17} /></button></div><div className="suggestion-row">{answerMode === "socratic" ? <><button onClick={() => onChange("我不太确定，请给我一个提示")}>给我一个提示</button><button onClick={() => onChange("我认为可以先从核心概念开始分析")}>我先说说思路</button></> : <><button onClick={() => onChange("这个概念如何举例？")}>这个概念如何举例？</button><button onClick={() => onChange("需要哪些前置知识？")}>需要哪些前置知识？</button></>}</div></article><aside className="card source-card"><div className="card-heading"><span>来源详情</span><Icon name="info" size={17} /></div>{uniqueSources.length === 0 ? <div className="source-empty">提问后显示检索到的资料来源</div> : uniqueSources.map((source) => <button className="source-block" key={sourceChapterKey(source)} onClick={() => onOpenSource(source)}><Icon name="file" size={15} /><strong>{sourceBookTitle(source)} · {source.contentUnitId || source.title}</strong></button>)}{uniqueSources.length > 0 && <button className="secondary-button full" onClick={onAddPlan}>加入学习计划 <Icon name="plus" size={15} /></button>}</aside></section></div>;
 }
 
 function TaskRow({ task, onOpen }: { task: LearningTask; onOpen: () => void }) {

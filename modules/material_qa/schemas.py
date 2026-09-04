@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -23,6 +25,7 @@ class CreateMaterialQaConversationRequest(BaseModel):
 
     book_id: str = Field(alias="bookId", min_length=1)
     user_id: str = Field(alias="userId", min_length=1)
+    reset_context: bool = Field(default=False, alias="resetContext")
     """调用方必须显式给出用户 ID。
 
     这里原先默认 "user_001"：前端漏传时后端静默按演示用户处理，
@@ -39,6 +42,9 @@ class CreateMaterialQaConversationResponse(BaseModel):
     user_id: str = Field(alias="userId")
     created_at: str = Field(alias="createdAt")
     status: str
+    answer_mode: Literal["direct", "socratic"] = Field(default="direct", alias="answerMode")
+    learning_task_id: str | None = Field(default=None, alias="learningTaskId")
+    socratic_state: str | None = Field(default=None, alias="socraticState")
 
 
 class AskMaterialQuestionRequest(BaseModel):
@@ -53,6 +59,15 @@ class AskMaterialQuestionRequest(BaseModel):
     # 默认 false：资料问答的价值在于「答案有出处」，宁可拒答也不编造。
     # 前端只在用户看到拒答后显式点击「用通用模型回答」时才置为 true。
     allow_general_fallback: bool = Field(default=False, alias="allowGeneralFallback")
+    answer_mode: Literal["direct", "socratic"] = Field(default="direct", alias="answerMode")
+    learning_task_id: str | None = Field(default=None, alias="learningTaskId", max_length=64)
+
+
+class FinishMaterialQaLearningTaskRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    book_id: str = Field(alias="bookId", min_length=1)
+    user_id: str = Field(alias="userId", min_length=1)
 
 
 class AskMaterialQuestionResponse(BaseModel):
@@ -67,3 +82,8 @@ class AskMaterialQuestionResponse(BaseModel):
     request_id: str = Field(alias="requestId")
     # 本次回答由通用模型给出、未经教材核对；此时 citations 必为空。
     answered_by_general_model: bool = Field(default=False, alias="answeredByGeneralModel")
+    answer_mode: Literal["direct", "socratic"] = Field(default="direct", alias="answerMode")
+    learning_task_id: str | None = Field(default=None, alias="learningTaskId")
+    socratic_state: str | None = Field(default=None, alias="socraticState")
+    response_quality: str | None = Field(default=None, alias="responseQuality")
+    socratic_completed: bool = Field(default=False, alias="socraticCompleted")
