@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Icon, type IconName } from "./components/Icon";
 import { LearnerProfileView } from "./components/LearnerProfileView";
 import { AuthView } from "./components/AuthView";
@@ -6,6 +6,7 @@ import { GoalsSetupView } from "./components/GoalsSetupView";
 import { SettingsView } from "./components/SettingsView";
 import { InlineResources, LearningResourcesView } from "./components/LearningResources";
 import { HelpCenterView } from "./components/HelpCenter";
+import { CommunityView } from "./components/CommunityView";
 import { auth, getSession, type AuthUser } from "./services/session";
 import { api, type ApiError, type BookCatalogItem, type DiagnosticResult, type LearningActivity, type LearningPlanResult, type PlanTimeBudget, type QaAnswerMode, type TodayLearningResponse } from "./services/api";
 import {
@@ -74,6 +75,7 @@ const navigation: Array<{ key: NavKey; label: string; icon: IconName }> = [
   { key: "records", label: "学习记录", icon: "chart" },
   { key: "qa", label: "资料问答", icon: "chat" },
   { key: "resources", label: "学习资源", icon: "spark" },
+  { key: "community", label: "学习社区", icon: "users" },
 ];
 
 const statusLabels: Record<TaskStatus, string> = {
@@ -104,6 +106,7 @@ function App() {
   const [bookCatalog, setBookCatalog] = useState<BookCatalogItem[]>([]);
   const [knowledgePointNames, setKnowledgePointNames] = useState<Record<string, string>>({});
   const [activeNav, setActiveNav] = useState<NavKey>("today");
+  const pageContentRef = useRef<HTMLDivElement>(null);
   const [bookId, setBookId] = useState<BookId>(books[0].id);
   const [toast, setToast] = useState<Toast>(null);
   const [modal, setModal] = useState<ModalState | null>(null);
@@ -112,6 +115,11 @@ function App() {
   const [todayLearning, setTodayLearning] = useState<TodayLearningResponse | null>(null);
   const [planTab, setPlanTab] = useState<"overview" | "knowledge">("overview");
   const [goalLevel, setGoalLevel] = useState("能够独立完成基础练习");
+
+  // Each page starts at the top without remounting its forms or resetting learning state.
+  useEffect(() => {
+    pageContentRef.current?.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, [activeNav, bookId]);
 
   const [diagnosticStage, setDiagnosticStage] = useState<"question" | "result">("question");
   const [diagnosticIndex, setDiagnosticIndex] = useState(0);
@@ -707,7 +715,7 @@ function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand-lockup"><div className="brand-mark"><Icon name="book-open" size={22} /></div><div><strong>自适应伴学智能体</strong><span>学习闭环</span></div></div>
-        <nav className="main-nav" aria-label="主导航">{navigation.map((item) => <button className={`nav-item ${activeNav === item.key ? "active" : ""}`} key={item.key} onClick={() => goTo(item.key)}><Icon name={item.icon} size={19} /><span>{item.label}</span></button>)}</nav>
+        <nav className="main-nav" aria-label="主导航">{navigation.map((item) => <button className={`nav-item ${activeNav === item.key ? "active" : ""}`} key={item.key} aria-label={item.label} title={item.label} onClick={() => goTo(item.key)}><Icon name={item.icon} size={19} /><span>{item.label}</span></button>)}</nav>
         <div className="sidebar-bottom"><button className={`nav-item ${activeNav === "goals" ? "active" : ""}`} onClick={() => setActiveNav("goals")}><Icon name="target" size={19} /><span>选书与目标</span></button><button className={`nav-item ${activeNav === "settings" ? "active" : ""}`} onClick={() => setActiveNav("settings")}><Icon name="settings" size={19} /><span>设置</span></button><button className={`nav-item ${activeNav === "help" ? "active" : ""}`} onClick={() => setActiveNav("help")}><Icon name="help" size={19} /><span>帮助</span></button>
           <div className="sidebar-user">
             <button className="sidebar-user-main" onClick={() => setActiveNav("settings")} title="账户设置">
@@ -722,7 +730,9 @@ function App() {
       </aside>
 
       <main className="main-content">
+        <div className="page-content" ref={pageContentRef} role="region" aria-label="页面内容" tabIndex={0}>
         <header className="topbar"><div className="mobile-brand"><div className="brand-mark"><Icon name="book-open" size={20} /></div></div><div className="topbar-context"><span className="context-label">当前学习内容</span><label className="book-select"><Icon name="book" size={18} /><select value={bookId} onChange={(event) => resetBookState(event.target.value as BookId)} aria-label="选择当前学习内容">{bookOptions.map((book) => <option key={book.id} value={book.id}>{book.title}</option>)}</select><Icon name="chevron-down" size={15} /></label></div></header>
+        <div className="page-body">
         {activeNav === "today" && <TodayView book={currentBook} content={content} tasks={currentTasks} dashboard={todayDashboard} goTo={goTo} startDiagnostic={startDiagnostic} onOpenTask={openTask} onOpenKnowledge={openKnowledgeDetail} onOpenRecords={() => goTo("records")} />}
         {activeNav === "profile" && <LearnerProfileView bookId={bookId} />}
         {activeNav === "diagnostic" && <DiagnosticView questions={diagnosticQuestions} index={diagnosticIndex} answers={diagnosticAnswers} skippedQuestions={skippedQuestions} paused={diagnosticPaused} busy={diagnosticBusy} stage={diagnosticStage} result={diagnosticResult} calibration={calibration} calibrationReason={calibrationReason} setAnswer={(id) => currentQuestion && setDiagnosticAnswers((answers) => ({ ...answers, [currentQuestion.id]: id }))} onPrevious={() => setDiagnosticIndex((index) => Math.max(0, index - 1))} onSubmit={submitDiagnostic} onSkip={skipDiagnostic} onPause={() => setDiagnosticPaused(true)} onResume={resumeDiagnostic} onCalibration={setCalibration} onReason={setCalibrationReason} onEvidence={openEvidence} onCalibrationSubmit={submitCalibration} />}
@@ -732,7 +742,10 @@ function App() {
         {activeNav === "settings" && <SettingsView user={user} onUserUpdated={setUser} onLogout={handleLogout} />}
         {activeNav === "resources" && <LearningResourcesView knowledgePointNames={knowledgePointNames} />}
         {activeNav === "help" && <HelpCenterView onNavigate={goTo} />}
-        {activeNav === "qa" && <QaView book={currentBook} sources={qaSources} messages={qaMessages} value={qaInput} busy={qaBusy} error={qaError} answerMode={qaAnswerMode} hasActiveLearningTask={Boolean(qaLearningTaskId)} onAnswerModeChange={changeQaAnswerMode} onFinishSocraticTask={finishSocraticTask} onChange={setQaInput} onAsk={askQuestion} onNew={clearQaContext} onOpenSource={openSource} onAddPlan={openMaterialPlanEditor} onAskGeneral={askWithGeneralModel} relatedKnowledgePointIds={(todayLearning?.knowledgeGraph.nodes ?? []).filter((node) => node.status === "weak").map((node) => node.id)} />}
+        {activeNav === "community" && <CommunityView key={user.userId} userId={user.userId} nickname={user.nickname} course={currentBook.shortTitle} />}
+        {activeNav === "qa" && <QaView book={currentBook} sources={qaSources} messages={qaMessages} value={qaInput} busy={qaBusy} error={qaError} onChange={setQaInput} onAsk={askQuestion} onNew={() => void initializeQaConversation(bookId)} onOpenSource={openSource} onAddPlan={openMaterialPlanEditor} onAskGeneral={askWithGeneralModel} relatedKnowledgePointIds={(todayLearning?.knowledgeGraph.nodes ?? []).filter((node) => node.status === "weak").map((node) => node.id)} />}
+        </div>
+        </div>
       </main>
 
       {toast && <div className="toast" role="status"><div className="toast-icon"><Icon name="check" size={17} /></div><div><strong>{toast.title}</strong><span>{toast.message}</span></div></div>}
