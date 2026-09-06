@@ -26,6 +26,18 @@ class RecordingLLMClient:
         return self.answer
 
 
+class QueuedLLMClient(RecordingLLMClient):
+    def __init__(self, responses: list[str]) -> None:
+        super().__init__()
+        self.responses = responses
+        self.calls = 0
+
+    def generate(self, prompt: str) -> str:
+        self.prompt = prompt
+        self.calls += 1
+        return self.responses.pop(0)
+
+
 class MaterialQaAgentTest(unittest.TestCase):
     def test_image_and_text_use_one_multimodal_request(self):
         from modules.material_qa.models import MaterialQaAttachment
@@ -117,6 +129,29 @@ class MaterialQaAgentTest(unittest.TestCase):
 
         self.assertTrue(output.refused)
         self.assertEqual(output.citations, [])
+
+    def test_invalid_output_retries_once_with_full_context(self):
+        client = QueuedLLMClient([
+            "这不是 JSON",
+            '{"refused": false, "answer": "请先比较训练集和测试集。"}',
+        ])
+        output = MaterialQaAgent(client).generate(MaterialQaAgentInput(
+            history=[], current_question="如何判断模型是否过拟合？", retrieval=MaterialQaRetrievalResult(chunks=[])
+        ))
+
+        self.assertEqual(client.calls, 2)
+        self.assertFalse(output.refused)
+        self.assertEqual(output.answer, "请先比较训练集和测试集。")
+        self.assertIn("上一次输出未通过 JSON 校验", client.prompt)
+
+    def test_string_boolean_is_normalized_without_retry(self):
+        client = RecordingLLMClient('{"refused": "false", "answer": "可继续解释。"}')
+        output = MaterialQaAgent(client).generate(MaterialQaAgentInput(
+            history=[], current_question="问题", retrieval=MaterialQaRetrievalResult(chunks=[])
+        ))
+
+        self.assertFalse(output.refused)
+        self.assertEqual(output.answer, "可继续解释。")
 
     def test_repeated_json_output_uses_first_object_without_leaking_json(self):
         client = RecordingLLMClient(

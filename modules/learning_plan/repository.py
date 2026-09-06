@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+import json
 from typing import Any
 
 from modules.common.errors import ValidationAppError
@@ -140,6 +141,30 @@ class MySqlLearningPlanRepository(MySqlLearnerProfileRepository):
             goal = cursor.fetchone()
             if goal is None:
                 raise ValidationAppError("an active learning goal is required", details={"user_id": user_id, "book_id": book_id})
+            # Preferences are planning constraints, separate from the
+            # knowledge-point model.  Keep them in the same context snapshot
+            # so a generated plan is explainable from one set of database
+            # facts.
+            cursor.execute(
+                "SELECT preferred_content_style, preferred_difficulty, learning_frequency, "
+                "preferred_activity_types, session_duration_minutes "
+                "FROM learner_profile WHERE user_id = %s ORDER BY updated_at DESC, id DESC LIMIT 1",
+                (user_id,),
+            )
+            profile = cursor.fetchone() or {}
+            activities = profile.get("preferred_activity_types") or []
+            if isinstance(activities, str):
+                try:
+                    activities = json.loads(activities)
+                except json.JSONDecodeError:
+                    activities = []
+            profile = {
+                "content_style": str(profile.get("preferred_content_style") or "balanced"),
+                "difficulty": str(profile.get("preferred_difficulty") or "adaptive"),
+                "learning_frequency": str(profile.get("learning_frequency") or "flexible"),
+                "activity_types": activities if isinstance(activities, list) else [],
+                "session_duration_minutes": profile.get("session_duration_minutes"),
+            }
             cursor.execute(
                 "SELECT kpm.knowledge_point_id, kp.name AS knowledge_point_name, kp.knowledge_point_code, kp.chapter_id, c.title AS chapter_title, "
                 "kp.course_order, kpm.mastery_score, kpm.aim_score, kpm.confidence, kpm.next_review_at, "
@@ -175,7 +200,7 @@ class MySqlLearningPlanRepository(MySqlLearnerProfileRepository):
             question_ids: dict[int, list[int]] = {}
             for item in cursor.fetchall():
                 question_ids.setdefault(int(item["knowledge_point_id"]), []).append(int(item["question_id"]))
-        return {"user_id": user_id, "book": book, "goal": goal, "points": points, "outcomes": outcomes, "question_ids": question_ids}
+        return {"user_id": user_id, "book": book, "goal": goal, "profile": profile, "points": points, "outcomes": outcomes, "question_ids": question_ids}
 
     def load_active_weekly_plan(self, *, user_id: int, book_id: int) -> dict[str, Any] | None:
         with self.connection() as connection:
@@ -207,6 +232,27 @@ class MySqlLearningPlanRepository(MySqlLearnerProfileRepository):
                 )
                 day["items"] = list(cursor.fetchall())
             return {"plan": plan, "days": days}
+
+    def load_current_mastery(self, *, user_id: int, book_id: int) -> list[dict[str, Any]]:
+        """Read the active goal's live knowledge-point state for the dashboard.
+
+        ``knowledge_point_master`` is updated whenever a daily diagnostic is
+        confirmed.  It is therefore the source of truth for the capability
+        graph; diagnostic-session summaries are only historical evidence.
+        """
+        with self.connection() as connection:
+            cursor = connection.cursor(dictionary=True)
+            cursor.execute(
+                "SELECT kp.id AS knowledge_point_id, kp.knowledge_point_code, kp.name, kp.description, "
+                "kpm.mastery_score, kpm.aim_score, kpm.confidence "
+                "FROM learning_goal goal "
+                "JOIN knowledge_point_master kpm ON kpm.goal_id = goal.id AND kpm.user_id = goal.user_id "
+                "JOIN knowledge_points kp ON kp.id = kpm.knowledge_point_id "
+                "WHERE goal.user_id = %s AND goal.book_id = %s AND goal.status = 0 "
+                "ORDER BY kp.course_order, kp.id",
+                (user_id, book_id),
+            )
+            return list(cursor.fetchall())
 
     def close_overdue_items(self, *, user_id: int, book_id: int) -> int:
         """Mark unfinished tasks from prior calendar days as skipped."""

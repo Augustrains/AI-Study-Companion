@@ -20,6 +20,20 @@ class PracticeRepository:
         # 进度计算涉及答题、任务和排行榜聚合；短缓存避免重复打开页面时反复全量统计。
         self._achievement_progress_cache: dict[int, tuple[float, dict[str, Any]]] = {}
 
+    def _ensure_resumable_session_schema(self) -> None:
+        """Keep free-practice sessions reopenable on legacy databases."""
+
+        with self.engine.begin() as connection:
+            columns = {
+                str(row[0])
+                for row in connection.execute(text(
+                    "SELECT COLUMN_NAME FROM information_schema.columns "
+                    "WHERE table_schema = DATABASE() AND table_name = 'diagnostic_session'"
+                )).fetchall()
+            }
+            if "completed_at" not in columns:
+                connection.execute(text("ALTER TABLE diagnostic_session ADD COLUMN completed_at DATETIME NULL"))
+
     @staticmethod
     def _period_start(period: str) -> str:
         return "DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY)" if period == "week" else "DATE_FORMAT(CURDATE(), '%Y-%m-01')"
@@ -30,16 +44,24 @@ class PracticeRepository:
         return {"id": int(row["id"]), "content": row["stem"], "options": options, "type": "single"}
 
     def start(self, *, user_id: int, book_id: int) -> dict[str, Any]:
+        self._ensure_resumable_session_schema()
         now = datetime.now().replace(microsecond=0)
         with self.engine.begin() as connection:
             exists = connection.execute(text("SELECT user_id FROM users WHERE user_id=:id"), {"id": user_id}).first()
             if not exists:
                 raise ValidationAppError("user does not exist")
+            active = connection.execute(text(
+                "SELECT id FROM diagnostic_session WHERE user_id=:u AND book_id=:b "
+                "AND session_type=2 AND completed_at IS NULL ORDER BY updated_at DESC, id DESC LIMIT 1"
+            ), {"u": user_id, "b": book_id}).first()
+            if active:
+                session_id = int(active[0])
+                return {"sessionId": session_id, "question": self.next_question(session_id=session_id, user_id=user_id), "resumed": True}
             session_id = connection.execute(text(
                 "INSERT INTO diagnostic_session (user_id,book_id,session_type,total_questions,correct_count,created_at,updated_at) "
                 "VALUES (:u,:b,2,0,0,:now,:now)"
             ), {"u": user_id, "b": book_id, "now": now}).lastrowid
-        return {"sessionId": int(session_id), "question": self.next_question(session_id=int(session_id), user_id=user_id)}
+        return {"sessionId": int(session_id), "question": self.next_question(session_id=int(session_id), user_id=user_id), "resumed": False}
 
     def resolve_book_id(self, book: str) -> int:
         aliases = {"ml": "ML-For-Beginners", "ml-001": "ML-For-Beginners", "dl": "AI-For-Beginners", "dl-001": "AI-For-Beginners"}
@@ -112,10 +134,12 @@ class PracticeRepository:
         return {"correct": correct, "correctAnswer": expected, "explanation": row["explanation"] or "", "statistics": {"answerCount": total, "correctCount": count, "accuracy": round(count * 100 / total, 1)}}
 
     def finish(self, *, session_id: int, user_id: int) -> dict[str, Any]:
-        with self.engine.connect() as connection:
+        self._ensure_resumable_session_schema()
+        with self.engine.begin() as connection:
             row = connection.execute(text("SELECT total_questions,correct_count FROM diagnostic_session WHERE id=:s AND user_id=:u AND session_type=2"), {"s": session_id, "u": user_id}).mappings().first()
         if not row:
             raise ValidationAppError("practice session does not exist")
+        connection.execute(text("UPDATE diagnostic_session SET completed_at=:now, updated_at=:now WHERE id=:s"), {"now": datetime.now().replace(microsecond=0), "s": session_id})
         total, correct = int(row["total_questions"]), int(row["correct_count"])
         return {"sessionId": session_id, "answerCount": total, "correctCount": correct, "accuracy": round(correct * 100 / total, 1) if total else 0}
 

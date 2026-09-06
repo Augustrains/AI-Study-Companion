@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
 from typing import Any
 
 from modules.common.errors import ValidationAppError
@@ -10,6 +11,25 @@ from modules.learning_plan.repository import MySqlLearningPlanRepository
 
 
 class MySqlDiagnosisRepository(MySqlLearningPlanRepository):
+    def ensure_diagnostic_draft_schema(self) -> None:
+        """Add resumable-diagnosis fields for installations without a migration runner."""
+
+        with self.connection() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                "SELECT COLUMN_NAME FROM information_schema.columns "
+                "WHERE table_schema = DATABASE() AND table_name = 'diagnostic_session'"
+            )
+            columns = {str(row[0]) for row in cursor.fetchall()}
+            definitions = {
+                "draft_payload": "LONGTEXT NULL",
+                "completed_at": "DATETIME NULL",
+                "learning_plan_item_id": "BIGINT NULL",
+            }
+            for name, definition in definitions.items():
+                if name not in columns:
+                    cursor.execute(f"ALTER TABLE diagnostic_session ADD COLUMN {name} {definition}")
+
     def load_planning_history(self, *, user_id: int, book_id: int) -> dict[str, Any]:
         """Load persisted context required to start the next diagnosis."""
 
@@ -66,7 +86,15 @@ class MySqlDiagnosisRepository(MySqlLearningPlanRepository):
                 for row in cursor.fetchall()
             }
 
-    def start_daily_session(self, *, user_id: int, learning_plan_day_id: int, learning_plan_item_id: int | None = None) -> dict[str, int]:
+    def start_daily_session(
+        self,
+        *,
+        user_id: int,
+        learning_plan_day_id: int,
+        learning_plan_item_id: int | None = None,
+        session_type: int = 1,
+    ) -> dict[str, Any]:
+        self.ensure_diagnostic_draft_schema()
         now = datetime.now().replace(microsecond=0)
         with self.connection() as connection:
             cursor = connection.cursor(dictionary=True)
@@ -96,14 +124,55 @@ class MySqlDiagnosisRepository(MySqlLearningPlanRepository):
                     "UPDATE learning_plan_day SET started_at = COALESCE(started_at, %s), updated_at = %s WHERE id = %s",
                     (now, now, learning_plan_day_id),
                 )
+            # An unfinished session is a draft, not historical diagnostic
+            # evidence. Reuse it so leaving a page never starts a new round.
             cursor.execute(
-                "INSERT INTO diagnostic_session (user_id, book_id, goal_id, session_type, learning_plan_day_id, total_questions, correct_count, created_at, updated_at) VALUES (%s, %s, %s, 1, %s, 0, 0, %s, %s)",
-                (user_id, binding["book_id"], binding["goal_id"], learning_plan_day_id, now, now),
+                "SELECT id, draft_payload FROM diagnostic_session "
+                "WHERE user_id = %s AND learning_plan_day_id = %s AND session_type = %s "
+                "AND (learning_plan_item_id <=> %s) "
+                "AND total_questions = 0 AND completed_at IS NULL "
+                "ORDER BY updated_at DESC, id DESC LIMIT 1",
+                (user_id, learning_plan_day_id, session_type, item_id),
+            )
+            existing = cursor.fetchone()
+            if existing is not None:
+                result = {"plan_id": int(binding["plan_id"]), "session_id": int(existing["id"])}
+                raw_draft = existing.get("draft_payload")
+                if raw_draft:
+                    try:
+                        parsed = json.loads(raw_draft)
+                        if isinstance(parsed, dict):
+                            result["draft"] = parsed
+                    except (TypeError, json.JSONDecodeError):
+                        # A malformed old draft must not block a learner from
+                        # starting the planned task again.
+                        pass
+                if item_id is not None:
+                    result["item_id"] = int(item_id)
+                return result
+            cursor.execute(
+                "INSERT INTO diagnostic_session (user_id, book_id, goal_id, session_type, learning_plan_day_id, learning_plan_item_id, total_questions, correct_count, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s, 0, 0, %s, %s)",
+                (user_id, binding["book_id"], binding["goal_id"], session_type, learning_plan_day_id, item_id, now, now),
             )
             result = {"plan_id": int(binding["plan_id"]), "session_id": int(cursor.lastrowid)}
             if item_id is not None:
                 result["item_id"] = int(item_id)
             return result
+
+    def save_draft(self, *, session_id: int, payload: dict[str, Any]) -> None:
+        """Persist non-final answers without feeding them into mastery history."""
+
+        self.ensure_diagnostic_draft_schema()
+        now = datetime.now().replace(microsecond=0)
+        with self.connection() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                "UPDATE diagnostic_session SET draft_payload = %s, updated_at = %s "
+                "WHERE id = %s AND completed_at IS NULL",
+                (json.dumps(payload, ensure_ascii=False), now, session_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValidationAppError("diagnostic draft session does not exist or is already completed")
 
     @staticmethod
     def _assert_item_unlocked(cursor: Any, *, user_id: int, item_id: int) -> None:
@@ -132,6 +201,7 @@ class MySqlDiagnosisRepository(MySqlLearningPlanRepository):
             raise ValidationAppError("complete the previous learning-plan task first", details={"previous_item_id": int(previous["id"]), "previous_title": str(previous["title"]), "item_id": item_id})
 
     def save_answers(self, *, session_id: int, records: list[Any]) -> None:
+        self.ensure_diagnostic_draft_schema()
         now = datetime.now().replace(microsecond=0)
         item_ids = [str(record.question.id) for record in records]
         if not item_ids:
@@ -145,6 +215,9 @@ class MySqlDiagnosisRepository(MySqlLearningPlanRepository):
                 raise ValidationAppError("diagnostic session does not exist")
             cursor.execute(f"SELECT id, learning_item_id FROM questions WHERE book_id = %s AND learning_item_id IN ({placeholders})", (session["book_id"], *item_ids))
             question_ids = {str(row["learning_item_id"]): int(row["id"]) for row in cursor.fetchall()}
+            # A calibration retry must replace the previous final snapshot,
+            # not duplicate the same question evidence.
+            cursor.execute("DELETE FROM diagnostic_answer WHERE session_id = %s", (session_id,))
             saved = correct = 0
             for record in records:
                 question_id = question_ids.get(str(record.question.id))
@@ -155,7 +228,11 @@ class MySqlDiagnosisRepository(MySqlLearningPlanRepository):
                 correct += int(record.is_correct)
             if saved != len(records):
                 raise ValidationAppError("some diagnostic questions are not mapped in MySQL", details={"saved": saved, "expected": len(records)})
-            cursor.execute("UPDATE diagnostic_session SET total_questions = %s, correct_count = %s, updated_at = %s WHERE id = %s", (saved, correct, now, session_id))
+            cursor.execute(
+                "UPDATE diagnostic_session SET total_questions = %s, correct_count = %s, "
+                "draft_payload = NULL, completed_at = %s, updated_at = %s WHERE id = %s",
+                (saved, correct, now, now, session_id),
+            )
 
     def complete_daily_diagnostic_task(self, *, session_id: int) -> None:
         """Mark the plan's daily-diagnosis item complete after its answers are confirmed.

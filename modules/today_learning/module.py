@@ -51,8 +51,9 @@ class TodayLearningModule:
             )
         except ValueError:
             plan = None
-        tasks = self._tasks_for_today(plan)
-        all_tasks = self._all_tasks(plan)
+        mastery_points = self._load_current_mastery(user_id=values["user_id"], book_id=book_key)
+        all_tasks = self._attach_knowledge_points(self._all_tasks(plan), mastery_points)
+        tasks = [task for task in all_tasks if task["expectedCompletionDate"] == date.today().isoformat()]
         task_titles = {str(task.get("title") or "") for task in all_tasks}
         activities = [
             activity
@@ -64,7 +65,7 @@ class TodayLearningModule:
             or (not activity.book_id and activity.category == "task" and str(activity.detail.get("task_title") or "") in task_titles)
         ]
         goal = str((plan or {}).get("plan", {}).get("goal") or self._latest_goal(activities) or "")
-        graph = self._knowledge_graph(activities, goal, tasks)
+        graph = self._knowledge_graph(activities, goal, tasks, mastery_points=mastery_points)
         progress = self._weekly_progress(activities, all_tasks)
         recommendation = self._recommendation(tasks, graph)
         continue_learning = self._continue_learning(tasks)
@@ -135,6 +136,37 @@ class TodayLearningModule:
             if task["expectedCompletionDate"] == date.today().isoformat()
         ]
 
+    def _load_current_mastery(self, *, user_id: str, book_id: str) -> list[dict[str, Any]]:
+        """Load live MySQL mastery, while retaining JSON-mode compatibility."""
+        reader = getattr(self.learning_plan.repository, "load_current_mastery", None)
+        if not callable(reader):
+            return []
+        try:
+            return reader(user_id=int(user_id), book_id=self._database_book_id(book_id))
+        except ValueError:
+            # Browser-local identities are deliberately supported as empty
+            # dashboards until they sign in to an account with a MySQL ID.
+            return []
+
+    @staticmethod
+    def _attach_knowledge_points(tasks: list[dict[str, Any]], points: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Restore task-to-point links from persisted task titles.
+
+        Historic plan-item rows predate a relation table.  Generated titles
+        contain the point name, so this deterministic bridge makes existing
+        plans useful immediately without rewriting user progress.
+        """
+        result: list[dict[str, Any]] = []
+        for task in tasks:
+            title = str(task.get("title") or "")
+            point_ids = [
+                str(point.get("knowledge_point_code") or point.get("knowledge_point_id"))
+                for point in points
+                if str(point.get("name") or "") and str(point["name"]) in title
+            ]
+            result.append({**task, "knowledgePointIds": point_ids})
+        return result
+
     @staticmethod
     def _minutes(title: str, description: str) -> int:
         match = re.search(r"(\d+)\s*(?:分钟|min)", f"{title} {description}", re.IGNORECASE)
@@ -174,13 +206,53 @@ class TodayLearningModule:
         return ""
 
     @staticmethod
-    def _knowledge_graph(activities: list[LearningActivity], goal: str, tasks: list[dict[str, Any]]) -> dict[str, Any]:
+    def _knowledge_graph(
+        activities: list[LearningActivity],
+        goal: str,
+        tasks: list[dict[str, Any]],
+        *,
+        mastery_points: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        # The live learner model is authoritative.  In particular, it also
+        # supplies unassessed points, which the old diagnostic snapshot could
+        # never render.  Keep the snapshot branch below for file-backed tests
+        # and legacy demo data without MySQL.
         latest = next((item for item in activities if item.category == "diagnostic" and item.result.get("knowledge_point_results")), None)
         task_by_knowledge_point = {
             point_id: task
             for task in tasks
             for point_id in task.get("knowledge_point_ids", task.get("knowledgePointIds", []))
         }
+        if mastery_points:
+            nodes = []
+            for point in mastery_points:
+                score = float(point.get("mastery_score") or 0.0)
+                confidence = float(point.get("confidence") or 0.0)
+                point_id = str(point.get("knowledge_point_code") or point.get("knowledge_point_id") or "")
+                task = task_by_knowledge_point.get(point_id, {})
+                # Baseline rows are inserted at 0 / 0.2 before any evidence.
+                # Do not present this as a weak result—the learner simply has
+                # not been assessed yet.
+                if confidence <= 0.2 and score <= 0.0:
+                    status = "unassessed"
+                elif score >= 0.75:
+                    status = "good"
+                elif score < 0.4:
+                    status = "weak"
+                else:
+                    status = "learning"
+                nodes.append({
+                    "id": point_id,
+                    "label": str(point.get("name") or point_id),
+                    "status": status,
+                    "accuracy": None,
+                    "masteryScore": round(score, 4),
+                    "taskId": task.get("id"),
+                    "reason": task.get("reason", ""),
+                    "description": str(point.get("description") or task.get("description") or ""),
+                })
+            return {"goal": goal, "nodes": nodes}
+
         nodes = []
         for item in (latest.result.get("knowledge_point_results", []) if latest else []):
             total = int(item.get("total", 0))

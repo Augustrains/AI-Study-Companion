@@ -749,3 +749,151 @@ body::after {
 .plan-budget-pace .icon { flex: 0 0 auto; margin-top: 2px; color: var(--blue); }
 .plan-budget-pace strong { color: var(--blue-dark); font-weight: 650; }
 
+/* 学习计划改用独立的 shadcn/ui 中性主题，不继承页面的玻璃拟态视觉。 */
+.shadcn-plan-page {
+  --card: #fff;
+  --ink: #18181b;
+  --muted: #71717a;
+  --line: #e4e4e7;
+  color: #18181b;
+  background: #fafafa;
+  border: 1px solid #e4e4e7;
+  border-radius: 14px;
+  box-shadow: none;
+  padding: 28px;
+}
+.shadcn-plan-page .page-header h1 { color: #18181b; letter-spacing: -.035em; }
+.shadcn-plan-page .page-header .eyebrow { color: #71717a; background: none; -webkit-text-fill-color: currentColor; text-transform: none; }
+.shadcn-plan-page [data-slot="card"] { background: #fff !important; border: 1px solid #e4e4e7 !important; border-radius: 10px !important; box-shadow: 0 1px 2px rgba(24, 24, 27, .04) !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+.shadcn-plan-page [data-slot="card-title"], .shadcn-plan-page [data-slot="card-content"] { color: #18181b; }
+.shadcn-plan-page [data-slot="card-description"] { color: #71717a; }
+.shadcn-plan-page [data-slot="button"] { min-height: 38px; color: #fafafa; background: #18181b; border: 1px solid #18181b; border-radius: 8px; box-shadow: none; font-weight: 500; }
+.shadcn-plan-page [data-slot="button"]:hover { color: #fafafa; background: #3f3f46; border-color: #3f3f46; box-shadow: none; transform: none; }
+.shadcn-plan-page [data-slot="button"][data-variant="outline"] { color: #27272a; background: #fff; border-color: #d4d4d8; }
+.shadcn-plan-page [data-slot="button"][data-variant="outline"]:hover { color: #18181b; background: #f4f4f5; border-color: #d4d4d8; }
+.shadcn-plan-page [data-slot="progress"] { background: #f4f4f5; }
+.shadcn-plan-page [data-slot="progress-indicator"] { background: #18181b; }
+.shadcn-plan-page [data-slot="badge"] { color: #52525b; background: #fff; border-color: #d4d4d8; box-shadow: none; }
+.shadcn-plan-page [data-slot="tabs-list"] { background: transparent; }
+.shadcn-plan-page [data-slot="tabs-trigger"] { color: #71717a; }
+.shadcn-plan-page [data-slot="tabs-trigger"][data-state="active"] { color: #18181b; background: transparent; box-shadow: none; }
+.shadcn-plan-page .shadcn-calendar .rdp-day_button { color: #27272a; }
+.shadcn-plan-page .shadcn-calendar .rdp-selected .rdp-day_button { color: #fafafa; background: #18181b; }
+.shadcn-plan-page .shadcn-calendar .rdp-day_button:hover { color: #18181b; background: #f4f4f5; }
+.shadcn-plan-page .shadcn-planned-day button { background: #f4f4f5; }
+.shadcn-plan-page .shadcn-task-row:hover { background: #fafafa; }
+
+/* 计划内容的 Tabs 使用普通纵向文档流，避免标签与当天标题重叠。 */
+.shadcn-plan-page .shadcn-task-card [data-slot="tabs"] { display: flex !important; flex-direction: column !important; gap: 0 !important; }
+.shadcn-plan-page .shadcn-task-card [data-slot="tabs-content"] { display: block; width: 100%; margin-top: 0; }
+.shadcn-plan-page .shadcn-task-card [data-slot="card-header"] { flex: 0 0 auto; }
+.shadcn-plan-page .shadcn-task-card [data-slot="card-content"] { min-width: 0; }
+
+/* 日历保持为辅助选择器，不抢占任务列表的主视觉空间。 */
+.shadcn-plan-page .shadcn-calendar-card { width: min(100%, 380px); justify-self: end; }
+.shadcn-plan-page .shadcn-calendar-card [data-slot="card-header"] { padding-bottom: 10px; }
+.shadcn-plan-page .shadcn-calendar { max-width: 100%; font-size: 12px; }
+.shadcn-plan-page .shadcn-calendar .rdp-day { height: 32px; }
+.shadcn-plan-page .shadcn-calendar .rdp-day_button { min-height: 30px; font-size: 12px; }
+@media (max-width: 900px) { .shadcn-plan-page .shadcn-calendar-card { width: 100%; justify-self: stretch; } }
+
+/* 桌面端：任务与日历并列，避免日历下方留下大块空白。 */
+@media (min-width: 901px) {
+  .shadcn-plan-page .shadcn-plan-main { grid-template-columns: minmax(0, 1fr) 380px; grid-template-rows: auto auto; align-items: start; }
+  .shadcn-plan-page .shadcn-task-card { grid-column: 1; grid-row: 1; }
+  .shadcn-plan-page .shadcn-calendar-card { grid-column: 2; grid-row: 1; }
+  .shadcn-plan-page .shadcn-plan-footer { grid-column: 1 / -1; grid-row: 2; }
+}
+
+/* Calendar 内部按钮不属于页面的主操作，保持轻量日期选择器外观。 */
+.shadcn-plan-page .shadcn-calendar [data-slot="button"] { color: #27272a !important; background: transparent !important; border-color: transparent !important; box-shadow: none !important; }
+.shadcn-plan-page .shadcn-calendar [data-slot="button"]:hover { color: #18181b !important; background: #f4f4f5 !important; }
+.shadcn-plan-page .shadcn-calendar .rdp-selected [data-slot="button"], .shadcn-plan-page .shadcn-calendar .rdp-selected [data-slot="button"]:hover { color: #fafafa !important; background: #18181b !important; }
+.shadcn-plan-page .shadcn-calendar .rdp-outside [data-slot="button"] { color: #a1a1aa !important; }
+
+/* 计划页沿用项目的天蓝玻璃主题，而非默认黑白 shadcn 配色。 */
+.shadcn-plan-page {
+  --card: rgba(255, 255, 255, .72);
+  --ink: #0a1020;
+  --muted: #74809c;
+  --line: rgba(255, 255, 255, .9);
+  color: #0a1020;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
+}
+.shadcn-plan-page .page-header h1 { color: #0a1020; }
+.shadcn-plan-page .page-header .eyebrow { color: transparent; background: linear-gradient(90deg, #0668c2, #3fb6ff 75%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; text-transform: uppercase; }
+.shadcn-plan-page .page-header p, .shadcn-plan-page [data-slot="card-description"] { color: #74809c; }
+.shadcn-plan-page [data-slot="card"] { background: rgba(255, 255, 255, .72) !important; border: 1px solid rgba(255, 255, 255, .92) !important; border-radius: 16px !important; box-shadow: 0 16px 40px -18px rgba(14, 140, 233, .18), 0 2px 4px rgba(10, 16, 32, .03), inset 0 1px 0 rgba(255, 255, 255, .95) !important; backdrop-filter: blur(24px) saturate(160%) !important; -webkit-backdrop-filter: blur(24px) saturate(160%) !important; }
+.shadcn-plan-page [data-slot="card-title"], .shadcn-plan-page [data-slot="card-content"] { color: #0a1020; }
+.shadcn-plan-page [data-slot="button"] { color: #fff; background: linear-gradient(160deg, #2fa8ff, #0a78d6 90%); border-color: transparent; border-radius: 11px; box-shadow: 0 14px 30px -10px rgba(14, 140, 233, .48); }
+.shadcn-plan-page [data-slot="button"]:hover { color: #fff; background: linear-gradient(160deg, #1f9bf5, #0668c2 90%); border-color: transparent; box-shadow: 0 18px 38px -10px rgba(14, 140, 233, .58); }
+.shadcn-plan-page [data-slot="button"][data-variant="outline"] { color: #0668c2; background: rgba(255, 255, 255, .7); border-color: rgba(255, 255, 255, .95); box-shadow: 0 8px 20px -12px rgba(14, 140, 233, .2), inset 0 1px 0 #fff; }
+.shadcn-plan-page [data-slot="button"][data-variant="outline"]:hover { color: #0668c2; background: rgba(255, 255, 255, .95); border-color: rgba(255, 255, 255, .98); }
+.shadcn-plan-page [data-slot="progress"] { background: rgba(14, 140, 233, .12); }.shadcn-plan-page [data-slot="progress-indicator"] { background: linear-gradient(90deg, #2fa8ff, #0a78d6); }.shadcn-plan-page .shadcn-progress-meta strong { color: #0668c2; }
+.shadcn-plan-page [data-slot="badge"] { color: #0668c2; background: rgba(14, 140, 233, .08); border-color: rgba(14, 140, 233, .18); }
+.shadcn-plan-page [data-slot="tabs-trigger"] { color: #74809c; }.shadcn-plan-page [data-slot="tabs-trigger"][data-state="active"] { color: #0668c2; }.shadcn-plan-page [data-slot="tabs-trigger"][data-state="active"]::after { background: linear-gradient(90deg, #2fa8ff, #0a78d6); }
+.shadcn-plan-page .shadcn-calendar [data-slot="button"] { color: #52607a !important; }.shadcn-plan-page .shadcn-calendar [data-slot="button"]:hover { color: #0668c2 !important; background: rgba(14, 140, 233, .1) !important; }.shadcn-plan-page .shadcn-calendar .rdp-selected [data-slot="button"], .shadcn-plan-page .shadcn-calendar .rdp-selected [data-slot="button"]:hover { color: #fff !important; background: linear-gradient(145deg, #2fa8ff, #0a78d6) !important; box-shadow: 0 5px 12px rgba(14, 140, 233, .2) !important; }.shadcn-plan-page .shadcn-planned-day button { background: rgba(14, 140, 233, .1) !important; color: #0668c2 !important; }.shadcn-plan-page .shadcn-calendar .rdp-outside [data-slot="button"] { color: #a7b3c3 !important; }
+.shadcn-plan-page .shadcn-task-row { color: #172238; border-top-color: rgba(14, 140, 233, .09); }.shadcn-plan-page .shadcn-task-row:hover { background: rgba(255, 255, 255, .62); }.shadcn-plan-page .shadcn-task-row small, .shadcn-plan-page .shadcn-day-reason, .shadcn-plan-page .shadcn-advice { color: #74809c; }.shadcn-plan-page .shadcn-task-dot.in_progress { border-color: #0b8ce9; }.shadcn-plan-page .shadcn-task-dot.completed { border-color: #0c8a62; background: #0c8a62; }.shadcn-plan-page .shadcn-resource { color: #26415f; border-top-color: rgba(14, 140, 233, .1); }
+
+/* 左侧补充组件：展示计划负载，并可直接切换到对应日期。 */
+.shadcn-plan-page .shadcn-plan-sidebar { display: grid; gap: 16px; align-self: start; }
+.shadcn-plan-page .shadcn-rhythm-card [data-slot="card-header"] { padding-bottom: 8px; }
+.shadcn-plan-page .shadcn-rhythm-card [data-slot="card-title"] { font-size: 14px; }
+.shadcn-plan-page .shadcn-rhythm-bars { display: flex; align-items: end; justify-content: space-between; gap: 7px; height: 118px; padding-top: 6px; border-top: 1px solid rgba(14, 140, 233, .1); }
+.shadcn-plan-page .shadcn-rhythm-day { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: end; gap: 6px; height: 100%; min-width: 0; color: #71819b; background: transparent; }
+.shadcn-plan-page .shadcn-rhythm-day i { display: block; width: min(16px, 100%); min-height: 9px; background: linear-gradient(180deg, #55b8ff, #0a78d6); border-radius: 5px 5px 2px 2px; box-shadow: 0 4px 9px rgba(14, 140, 233, .16); }
+.shadcn-plan-page .shadcn-rhythm-day.completed i { background: linear-gradient(180deg, #40c89a, #0c8a62); box-shadow: 0 4px 9px rgba(12, 138, 98, .14); }
+.shadcn-plan-page .shadcn-rhythm-day span { overflow: hidden; max-width: 100%; font-size: 9px; white-space: nowrap; }
+.shadcn-plan-page .shadcn-rhythm-day:hover i { filter: brightness(.92); transform: translateY(-1px); }
+.shadcn-plan-page .shadcn-rhythm-empty { color: #74809c; font-size: 12px; line-height: 1.6; }
+
+/* 让任务卡与右侧日历高度更接近；溢出的任务仍通过内部滚动浏览。 */
+@media (min-width: 901px) { .shadcn-plan-page .shadcn-task-scroll { height: 195px; } }
+
+/* 左侧的学习提醒卡补足纵向信息层级。 */
+.shadcn-plan-page .shadcn-plan-sidebar::after {
+  content: "学习提醒\A完成当天任务后，系统会根据实际用时与诊断表现调整后续计划。";
+  display: block;
+  min-height: 142px;
+  padding: 20px;
+  color: #6f819d;
+  background: rgba(255, 255, 255, .68);
+  border: 1px solid rgba(255, 255, 255, .92);
+  border-radius: 16px;
+  box-shadow: 0 16px 40px -18px rgba(14, 140, 233, .18), inset 0 1px 0 rgba(255, 255, 255, .95);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  white-space: pre-line;
+  font-size: 13px;
+  line-height: 1.75;
+}
+.shadcn-plan-page .shadcn-plan-sidebar::after { font-weight: 400; }
+.shadcn-plan-page .shadcn-plan-sidebar::first-line { color: #172b49; font-weight: 650; }
+
+/* 计划页采用更紧凑的文字层级，避免顶部指标与标题显得过大。 */
+.shadcn-plan-page .page-header { margin-bottom: 15px; }
+.shadcn-plan-page .page-header h1 { font-size: clamp(30px, 2.35vw, 36px); line-height: 1.12; }
+.shadcn-plan-page .page-header p { margin-top: 6px; font-size: 12px; }
+.shadcn-plan-page .page-header .eyebrow { font-size: 11px; }
+.shadcn-plan-page [data-slot="button"] { min-height: 36px; font-size: 12px; }
+.shadcn-plan-page .shadcn-stat-content [data-slot="card-description"] { font-size: 12px; }
+.shadcn-plan-page .shadcn-stat-content strong { font-size: 18px; line-height: 1.2; }
+.shadcn-plan-page .shadcn-plan-stats [data-slot="card"] { --card-spacing: 14px; }
+.shadcn-plan-page [data-slot="card-title"] { font-size: 14px; }
+.shadcn-plan-page .shadcn-goal-card [data-slot="card-title"], .shadcn-plan-page .shadcn-day-title [data-slot="card-title"] { font-size: 16px; }
+.shadcn-plan-page [data-slot="card-description"], .shadcn-plan-page .shadcn-day-reason { font-size: 12px; }
+
+/* 概览类信息居中，列表类信息保持左对齐以利浏览。 */
+.shadcn-plan-page .page-header { position: relative; justify-content: center; }
+.shadcn-plan-page .page-header > div:first-child { flex: 1; text-align: center; }
+.shadcn-plan-page .page-header > [data-slot="button"] { position: absolute; right: 0; bottom: 0; }
+.shadcn-plan-page .shadcn-stat-content { text-align: center; }
+.shadcn-plan-page .shadcn-goal-card [data-slot="card-header"], .shadcn-plan-page .shadcn-goal-card [data-slot="card-content"], .shadcn-plan-page .shadcn-rhythm-card [data-slot="card-header"], .shadcn-plan-page .shadcn-rhythm-card [data-slot="card-content"], .shadcn-plan-page .shadcn-calendar-card [data-slot="card-header"] { text-align: center; }
+.shadcn-plan-page .shadcn-calendar-card [data-slot="card-header"] { align-items: center; }
+.shadcn-plan-page .shadcn-plan-sidebar::after { text-align: center; }
+@media (max-width: 620px) { .shadcn-plan-page .page-header { align-items: center; }.shadcn-plan-page .page-header > [data-slot="button"] { position: static; }.shadcn-plan-page .page-header > div:first-child { flex: auto; } }
+

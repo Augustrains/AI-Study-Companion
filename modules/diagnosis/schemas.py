@@ -68,6 +68,9 @@ class DiagnosticStartResponse(BaseModel):
 
     diagnostic_id: str = Field(alias="diagnosticId")
     questions: list[DiagnosticQuestionResponse]
+    answers: dict[str, str] = Field(default_factory=dict)
+    skipped_question_ids: list[str] = Field(default_factory=list, alias="skippedQuestionIds")
+    next_question_index: int = Field(default=0, alias="nextQuestionIndex", ge=0)
 
 
 class DiagnosticAnswerResponse(BaseModel):

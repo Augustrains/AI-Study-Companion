@@ -60,6 +60,18 @@ class DeepSeekLLMClientTest(unittest.TestCase):
         ])
 
     @patch("sdk.llm_client.httpx.Client")
+    def test_generate_json_requests_a_json_object(self, mock_client_class):
+        response = MagicMock()
+        response.json.return_value = {"choices": [{"message": {"content": '{"refused": false, "answer": "回答"}'}}]}
+        client = mock_client_class.return_value.__enter__.return_value
+        client.post.return_value = response
+
+        result = DeepSeekLLMClient(api_key="secret").generate_json("只输出 JSON")
+
+        self.assertIn('"answer"', result)
+        self.assertEqual(client.post.call_args.kwargs["json"]["response_format"], {"type": "json_object"})
+
+    @patch("sdk.llm_client.httpx.Client")
     def test_http_error_is_converted_to_external_service_error(self, mock_client_class):
         request = httpx.Request("POST", "https://opencode.ai/zen/go/v1/chat/completions")
         error_response = httpx.Response(401, request=request)

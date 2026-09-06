@@ -19,6 +19,7 @@ class FakePlanRepository:
             "user_id": user_id,
             "book": {"id": book_id, "book_name": "测试教材"},
             "goal": {"id": 4, "goal": "掌握基础知识", "aim_level": 2, "daily_minutes": 40},
+            "profile": {"content_style": "balanced", "difficulty": "adaptive", "learning_frequency": "flexible", "activity_types": ["reading", "quiz"], "session_duration_minutes": 30},
             "points": [
                 {"knowledge_point_id": 7, "knowledge_point_name": "线性回归", "chapter_title": "第一章", "course_order": 1, "mastery_score": 0.2, "aim_score": 0.8, "confidence": 0.3},
                 {"knowledge_point_id": 8, "knowledge_point_name": "模型评估", "chapter_title": "第二章", "course_order": 2, "mastery_score": 0.7, "aim_score": 0.8, "confidence": 0.3},
@@ -133,6 +134,21 @@ class WeeklyLearningPlanTest(unittest.TestCase):
 
         self.assertEqual(result["days"][0]["items"][1]["title"], "复习：线性回归（3分钟）")
         self.assertEqual(result["days"][0]["items"][1]["source"], "spaced_review")
+
+    def test_profile_frequency_and_preferences_change_the_generated_plan(self):
+        repository = FakePlanRepository()
+        context = repository.load_weekly_context(user_id=1, book_id=2)
+        context["profile"] = {"content_style": "concise", "difficulty": "challenging", "learning_frequency": "occasional", "activity_types": ["project"], "session_duration_minutes": 45}
+        module = LearningPlanModule(repository)
+        workloads = [module._workload(point, context) for point in context["points"]]
+        result = WeeklyLearningPlanAgent().build(WeeklyPlanningInput(context=context, workloads=workloads, start_date=date(2026, 9, 2)))
+
+        self.assertEqual([day["planned_minutes"] for day in result["days"]][1::3], [0, 0])
+        active_items = [item for day in result["days"] for item in day["items"]]
+        self.assertTrue(any(item["title"].startswith("编程实践：") for item in active_items))
+        self.assertTrue(any("综合应用题" in item["description"] for item in active_items if item["title"].startswith(("练习：", "编程实践："))))
+        self.assertTrue(all(day["session_duration_minutes"] == 45 for day in result["days"]))
+        self.assertTrue(any("（22分钟）" in item["title"] for item in active_items if item["title"].startswith("阅读：")))
 
     def test_mastery_fusion_uses_rule_confidence_without_overwriting_bkt(self):
         fused = MasteryFusion().combine(

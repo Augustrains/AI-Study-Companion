@@ -84,8 +84,29 @@ class DeepSeekLLMClient:
         )
         return self._generate_from_content(content)
 
+    def generate_json(self, prompt: str, *, image_urls: list[str] | None = None) -> str:
+        """Request one JSON object from providers supporting the OpenAI schema.
+
+        This is deliberately opt-in: several existing agents request prose, so
+        forcing JSON at the shared ``generate`` boundary would break them.
+        """
+
+        content: str | list[dict[str, Any]] = prompt
+        if image_urls:
+            content = [{"type": "text", "text": prompt}]
+            content.extend(
+                {"type": "image_url", "image_url": {"url": image_url}}
+                for image_url in image_urls
+            )
+        return self._generate_from_content(content, response_format={"type": "json_object"})
+
     # 统一发送纯文本或多模态Chat Completions请求并解析返回文本。
-    def _generate_from_content(self, content: str | list[dict[str, Any]]) -> str:
+    def _generate_from_content(
+        self,
+        content: str | list[dict[str, Any]],
+        *,
+        response_format: dict[str, str] | None = None,
+    ) -> str:
 
         if not self.api_key:
             raise ConfigurationError(
@@ -98,6 +119,8 @@ class DeepSeekLLMClient:
             "messages": [{"role": "user", "content": content}],
             "stream": False,
         }
+        if response_format is not None:
+            payload["response_format"] = response_format
         try:
             with httpx.Client(
                 timeout=self.timeout,

@@ -61,26 +61,28 @@ class WeeklyLearningPlanAgent:
     def build_daily_diagnostic(self, *, context: dict[str, Any], workloads: list[dict[str, Any]], scheduled: date) -> dict[str, Any]:
         """Create only the first task of a day: its evidence-gathering diagnostic."""
 
-        durations = self._durations({}, int(context["goal"]["daily_minutes"]))
+        durations = self._durations({}, int(context["goal"]["daily_minutes"]), self._profile(context).get("session_duration_minutes"))
         states, _deferred, _reviews = self._states(workloads)
         focus = self._next_focus(states)
-        return self._day(scheduled, 0, focus, [], durations)
+        return self._day(scheduled, 0, focus, [], durations, profile=self._profile(context))
 
     def build_daily_learning(self, *, context: dict[str, Any], workloads: list[dict[str, Any]], scheduled: date, pace_factors: dict[str, float] | None = None) -> dict[str, Any]:
         """Generate today's post-diagnostic learning tasks from fresh mastery."""
 
         daily_minutes = int(context["goal"]["daily_minutes"])
-        durations = self._durations(pace_factors or {}, daily_minutes)
+        profile = self._profile(context)
+        durations = self._durations(pace_factors or {}, daily_minutes, profile.get("session_duration_minutes"))
         states, _deferred, review_states = self._states(workloads)
         capacity = daily_minutes - durations["diagnostic"]
         review_items = self._build_due_review_items(review_states, scheduled, capacity, durations)
         capacity -= sum(int(item["minutes"]) for item in review_items)
-        learning_items = [*review_items, *self._build_day_learning_items(states, capacity, durations)]
-        return self._day(scheduled, 0, self._next_focus(states), learning_items, durations)
+        learning_items = [*review_items, *self._build_day_learning_items(states, capacity, durations, profile=profile)]
+        return self._day(scheduled, 0, self._next_focus(states), learning_items, durations, profile=profile)
 
     def build(self, agent_input: WeeklyPlanningInput) -> dict[str, Any]:
         daily_minutes = int(agent_input.context["goal"]["daily_minutes"])
-        durations = self._durations(agent_input.pace_factors, daily_minutes)
+        profile = self._profile(agent_input.context)
+        durations = self._durations(agent_input.pace_factors, daily_minutes, profile.get("session_duration_minutes"))
         if daily_minutes < durations["diagnostic"]:
             raise ValueError(f"daily_minutes must be at least {self.DIAGNOSTIC_MINUTES}")
 
@@ -89,6 +91,9 @@ class WeeklyLearningPlanAgent:
         days: list[dict[str, Any]] = []
         for index in range(agent_input.plan_days):
             scheduled = agent_input.start_date + timedelta(days=index)
+            if index not in self._learning_day_indexes(profile["learning_frequency"], agent_input.plan_days):
+                days.append(self._rest_day(scheduled, index, profile))
+                continue
             capacity = daily_minutes - durations["diagnostic"]
             # A review date is a scheduling constraint, not merely a value kept
             # in the learner model.  Put due retrieval practice ahead of newly
@@ -96,10 +101,11 @@ class WeeklyLearningPlanAgent:
             # BKT-driven learning sequence.
             review_items = self._build_due_review_items(review_states, scheduled, capacity, durations)
             capacity -= sum(int(item["minutes"]) for item in review_items)
-            learning_items = [*review_items, *self._build_day_learning_items(states, capacity, durations, coding=(index % 3 == 2))]
+            coding = "project" in profile["activity_types"] and (index % 2 == 1 or "quiz" not in profile["activity_types"])
+            learning_items = [*review_items, *self._build_day_learning_items(states, capacity, durations, coding=coding, profile=profile)]
             requested_focus = next((state for state in states if state.get("user_requested_focus")), None)
             focus = requested_focus or (learning_items[0] if learning_items else self._next_focus(states))
-            days.append(self._day(scheduled, index, focus, learning_items, durations, agent_input.regeneration_reason))
+            days.append(self._day(scheduled, index, focus, learning_items, durations, agent_input.regeneration_reason, profile))
 
         self._apply_agent_reasons(days, agent_input)
         deferred = sorted(
@@ -121,6 +127,41 @@ class WeeklyLearningPlanAgent:
         focus = str((days[0].get("title") if days else "当前重点知识点")).replace("第 1 天学习计划", "").strip()
         advice = [f"建议每天先完成诊断，再按“阅读—复习—练习”的顺序学习；本周优先巩固{focus}。"]
         return {"days": days, "deferred_knowledge_point_ids": deferred, "advice": advice, "resources": resources}
+
+    @staticmethod
+    def _profile(context: dict[str, Any]) -> dict[str, Any]:
+        raw = context.get("profile") or {}
+        activities = raw.get("activity_types") or []
+        return {
+            "content_style": str(raw.get("content_style") or "balanced"),
+            "difficulty": str(raw.get("difficulty") or "adaptive"),
+            "learning_frequency": str(raw.get("learning_frequency") or "flexible"),
+            "activity_types": {str(item) for item in activities} if isinstance(activities, list) else set(),
+            "session_duration_minutes": raw.get("session_duration_minutes"),
+        }
+
+    @staticmethod
+    def _learning_day_indexes(frequency: str, plan_days: int) -> set[int]:
+        if frequency == "occasional":
+            return set(range(0, plan_days, 3))
+        if frequency == "frequent":
+            return {index for index in range(plan_days) if index % 2 == 0 or index == plan_days - 1}
+        # "daily" is explicit; "flexible" keeps every day available so the
+        # learner's stated daily budget remains usable.
+        return set(range(plan_days))
+
+    @staticmethod
+    def _rest_day(scheduled: date, index: int, profile: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "date": scheduled.isoformat(),
+            "title": f"第 {index + 1} 天学习计划（弹性安排）",
+            "adaptive_reason": "根据“每周三四次”或“偶尔”学习的频率偏好，预留恢复与机动时间。",
+            "priority_score": 0.0,
+            "planned_minutes": 0,
+            "knowledge_point_ids": [],
+            "items": [],
+            "session_duration_minutes": profile.get("session_duration_minutes"),
+        }
 
     @staticmethod
     def _apply_user_focus(workloads: list[dict[str, Any]], reason: str) -> list[dict[str, Any]]:
@@ -159,8 +200,15 @@ class WeeklyLearningPlanAgent:
             # Rule-based explanations remain available when the model is down.
             return
 
-    def _durations(self, factors: dict[str, float], daily_minutes: int) -> dict[str, int]:
+    def _durations(self, factors: dict[str, float], daily_minutes: int, session_duration_minutes: Any = None) -> dict[str, int]:
         baseline = {"reading": self.READING_MINUTES, "practice": self.PRACTICE_MINUTES, "review": self.PRACTICE_MINUTES, "diagnostic": self.DIAGNOSTIC_MINUTES}
+        # The preferred session length controls the size of a coherent task
+        # block without overriding the learner's total daily budget.
+        if isinstance(session_duration_minutes, int) and session_duration_minutes > 0:
+            baseline["reading"] = min(60, max(10, round(session_duration_minutes * 0.5)))
+            baseline["practice"] = min(15, max(3, round(session_duration_minutes * 0.1)))
+            baseline["review"] = baseline["practice"]
+            baseline["diagnostic"] = min(self.DIAGNOSTIC_MINUTES, session_duration_minutes)
         durations = {key: max(1, round(value * max(0.6, min(2.0, float(factors.get(key, 1.0)))))) for key, value in baseline.items()}
         durations["diagnostic"] = min(durations["diagnostic"], daily_minutes)
         return durations
@@ -224,7 +272,7 @@ class WeeklyLearningPlanAgent:
         except ValueError:
             return False
 
-    def _build_day_learning_items(self, states: list[dict[str, Any]], capacity: int, durations: dict[str, int], coding: bool = False) -> list[dict[str, Any]]:
+    def _build_day_learning_items(self, states: list[dict[str, Any]], capacity: int, durations: dict[str, int], coding: bool = False, profile: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         """Schedule prerequisite reading, then at most one practice per point."""
 
         items: list[dict[str, Any]] = []
@@ -232,11 +280,11 @@ class WeeklyLearningPlanAgent:
         while capacity >= durations["practice"]:
             state = self._next_reading(states, capacity, durations["reading"])
             if state is not None:
-                items.append(self._reading_item(state, durations["reading"]))
+                items.append(self._reading_item(state, durations["reading"], profile=profile))
                 state["reading_pending"] = False
                 capacity -= durations["reading"]
                 if capacity >= durations["practice"] and int(state["practice_remaining"]) > 0:
-                    items.append(self._practice_item(state, durations["practice"], coding=coding))
+                    items.append(self._practice_item(state, durations["practice"], coding=coding, profile=profile))
                     coding = False
                     practiced_today.add(int(state["knowledge_point_id"]))
                     capacity -= durations["practice"]
@@ -245,7 +293,7 @@ class WeeklyLearningPlanAgent:
             state = self._next_practice(states, practiced_today)
             if state is None:
                 break
-            items.append(self._practice_item(state, durations["practice"], coding=coding))
+            items.append(self._practice_item(state, durations["practice"], coding=coding, profile=profile))
             coding = False
             practiced_today.add(int(state["knowledge_point_id"]))
             capacity -= durations["practice"]
@@ -265,7 +313,7 @@ class WeeklyLearningPlanAgent:
     def _next_focus(states: list[dict[str, Any]]) -> dict[str, Any] | None:
         return next((state for state in states if bool(state["reading_pending"]) or int(state["practice_remaining"]) > 0), None)
 
-    def _day(self, scheduled: date, index: int, focus: dict[str, Any] | None, learning_items: list[dict[str, Any]], durations: dict[str, int], regeneration_reason: str = "") -> dict[str, Any]:
+    def _day(self, scheduled: date, index: int, focus: dict[str, Any] | None, learning_items: list[dict[str, Any]], durations: dict[str, int], regeneration_reason: str = "", profile: dict[str, Any] | None = None) -> dict[str, Any]:
         focus_name = str((focus or {}).get("knowledge_point_name") or "本日复习")
         diagnostic = {
             "title": f"学习前诊断：{focus_name}（{durations['diagnostic']}分钟）",
@@ -277,7 +325,11 @@ class WeeklyLearningPlanAgent:
             "priority_score": float((focus or {}).get("priority_score") or 0),
         }
         items = [diagnostic, *learning_items]
+        profile = profile or {}
         reason = self._day_reason(focus_name, learning_items, regeneration_reason)
+        session_minutes = profile.get("session_duration_minutes")
+        if isinstance(session_minutes, int) and session_minutes > 0:
+            reason += f" 单次学习建议控制在 {session_minutes} 分钟内，超出时分段完成。"
         return {
             "date": scheduled.isoformat(),
             "title": f"第 {index + 1} 天学习计划",
@@ -286,6 +338,7 @@ class WeeklyLearningPlanAgent:
             "planned_minutes": sum(int(item["minutes"]) for item in items),
             "knowledge_point_ids": sorted({int(item["knowledge_point_id"]) for item in items if int(item["knowledge_point_id"])}),
             "items": items,
+            "session_duration_minutes": session_minutes,
         }
 
     @staticmethod
@@ -311,11 +364,17 @@ class WeeklyLearningPlanAgent:
             clauses.append(f"本次重排参考：{regeneration_reason.strip()}")
         return "；".join(clauses) + "。"
 
-    def _reading_item(self, state: dict[str, Any], minutes: int) -> dict[str, Any]:
+    def _reading_item(self, state: dict[str, Any], minutes: int, profile: dict[str, Any] | None = None) -> dict[str, Any]:
         point_name = str(state["knowledge_point_name"])
+        content_style = str((profile or {}).get("content_style") or "balanced")
+        style_note = {
+            "concise": "先阅读核心摘要，再用要点清单回顾。",
+            "detailed": "按概念、推导和反例逐段阅读，并记录疑问。",
+            "example_first": "先看一个具体案例，再回到概念与原理。",
+        }.get(content_style, "阅读对应章节内容，整理关键概念与例子。")
         return {
             "title": f"阅读：{state.get('chapter_title') or '所属章节'}—{point_name}（{minutes}分钟）",
-            "description": f"阅读“{point_name}”对应章节内容，整理关键概念与例子。",
+            "description": f"阅读“{point_name}”对应章节内容。{style_note}",
             "source": "weak_point",
             "adaptive_reason": "该知识点尚未完成阅读，先建立概念框架后再练习。",
             "knowledge_point_id": int(state["knowledge_point_id"]),
@@ -324,7 +383,7 @@ class WeeklyLearningPlanAgent:
             "priority_score": float(state["priority_score"]),
         }
 
-    def _practice_item(self, state: dict[str, Any], minutes: int, coding: bool = False) -> dict[str, Any]:
+    def _practice_item(self, state: dict[str, Any], minutes: int, coding: bool = False, profile: dict[str, Any] | None = None) -> dict[str, Any]:
         sequence = int(state["next_practice_sequence"])
         question_ids = state.get("question_ids") or []
         question_id = question_ids[(sequence - 1) % len(question_ids)] if question_ids else None
@@ -332,9 +391,11 @@ class WeeklyLearningPlanAgent:
         state["practice_remaining"] = int(state["practice_remaining"]) - 1
         state["next_practice_sequence"] = sequence + 1
         point_name = str(state["knowledge_point_name"])
+        difficulty = str((profile or {}).get("difficulty") or "adaptive")
+        difficulty_note = {"easy": "选择基础巩固题并提供分步提示。", "challenging": "优先综合应用题，要求独立说明思路。"}.get(difficulty, "难度随当前掌握度自适应调整。")
         return {
             "title": f"编程实践：{point_name}（第 {sequence} 次，{minutes}分钟）" if coding else f"练习：{point_name}（第 {sequence} 次，{minutes}分钟）",
-            "description": f"根据“{point_name}”要求编写 Python 代码并运行测试用例。" if coding else f"完成一次围绕“{point_name}”的有效练习{reference}，记录错因并查看反馈。",
+            "description": (f"根据“{point_name}”要求编写 Python 代码并运行测试用例。{difficulty_note}" if coding else f"完成一次围绕“{point_name}”的有效练习{reference}，记录错因并查看反馈。{difficulty_note}"),
             "source": "weak_point",
             "adaptive_reason": "结合本地教材编程/项目任务进行可验证实践。" if coding else "BKT 预计仍需有效练习；同一知识点每天最多安排一次。",
             "knowledge_point_id": int(state["knowledge_point_id"]),

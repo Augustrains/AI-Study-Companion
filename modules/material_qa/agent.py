@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import logging
 
-from modules.common.errors import AppError
+from modules.common.errors import AppError, ExternalServiceError
 from sdk.llm_client import LLMClient, NullLLMClient
 
 from .models import MaterialQaAgentInput, MaterialQaAgentOutput, MaterialQaMessage
+
+
+logger = logging.getLogger(__name__)
 
 
 def _first_json_object(raw_response: str) -> dict | None:
@@ -113,12 +118,23 @@ class MaterialQaAgent:
             if attachment.file_type.startswith("image/")
         ]
         # 有图片时将文字提示和图片URL放入同一次多模态模型请求。
-        raw_response = (
-            self.llm_client.generate_multimodal(prompt, image_urls=image_urls)
-            if image_urls
-            else self.llm_client.generate(prompt)
-        )
-        answer, refused = self._parse_response(raw_response)
+        raw_response = self._generate_structured(prompt, image_urls=image_urls)
+        parsed = self._try_parse_response(raw_response)
+        if parsed is None:
+            # Repeat the complete request once.  Reformatting the raw answer
+            # alone cannot safely decide whether its claims are supported by
+            # the retrieved material, whereas the original context can.
+            retry_prompt = (
+                f"{prompt}\n\n上一次输出未通过 JSON 校验。现在只输出一个合法 JSON 对象，"
+                "必须包含布尔值 refused 和非空字符串 answer；不要输出任何其他文字。"
+            )
+            raw_response = self._generate_structured(retry_prompt, image_urls=image_urls)
+            parsed = self._try_parse_response(raw_response)
+        if parsed is None:
+            self._log_invalid_response(raw_response)
+            answer, refused = "模型返回格式异常，请稍后重试本轮问题。", True
+        else:
+            answer, refused = parsed
 
         # 教材内答不出、且用户显式允许降级时，再发一次「通用知识」提示词。
         # 只有拒答分支才会走到第二次调用，正常有出处的问答仍然是一次调用。
@@ -203,7 +219,7 @@ class MaterialQaAgent:
 """
 
     @staticmethod
-    def _parse_response(raw_response: str) -> tuple[str, bool]:
+    def _try_parse_response(raw_response: str) -> tuple[str, bool] | None:
         """Parse the model's structured answer and hide citations on invalid output."""
 
         payload = _first_json_object(raw_response)
@@ -211,12 +227,48 @@ class MaterialQaAgent:
             if payload is None:
                 raise ValueError("missing material QA JSON object")
             answer = payload["answer"]
-            refused = payload["refused"]
+            refused = payload.get("refused", payload.get("is_refused"))
+            # Some compatible endpoints serialize JSON booleans as strings.
+            # Normalize only the unambiguous forms; all other values fail
+            # closed so citations never accompany an uncertain response.
+            if isinstance(refused, str) and refused.strip().lower() in {"true", "false"}:
+                refused = refused.strip().lower() == "true"
             if not isinstance(answer, str) or not answer.strip() or not isinstance(refused, bool):
                 raise ValueError("invalid material QA response fields")
             return answer.strip(), refused
         except (KeyError, TypeError, ValueError):
-            return "模型返回格式异常，请重新发送本轮问题。", True
+            return None
+
+    @classmethod
+    def _parse_response(cls, raw_response: str) -> tuple[str, bool]:
+        """Compatibility wrapper for callers/tests that need a safe fallback."""
+
+        return cls._try_parse_response(raw_response) or ("模型返回格式异常，请稍后重试本轮问题。", True)
+
+    def _generate_structured(self, prompt: str, *, image_urls: list[str]) -> str:
+        generate_json = getattr(self.llm_client, "generate_json", None)
+        if callable(generate_json):
+            try:
+                return generate_json(prompt, image_urls=image_urls)
+            except ExternalServiceError as exc:
+                # A few OpenAI-compatible endpoints expose chat completions
+                # but not ``response_format``.  Retry without that optional
+                # capability only for a request-validation rejection; network
+                # and authentication failures must remain visible.
+                if exc.details.get("status_code") not in {400, 404, 422}:
+                    raise
+        return (
+            self.llm_client.generate_multimodal(prompt, image_urls=image_urls)
+            if image_urls
+            else self.llm_client.generate(prompt)
+        )
+
+    @staticmethod
+    def _log_invalid_response(raw_response: str) -> None:
+        # A digest allows correlation with provider-side traces without placing
+        # learner questions or model output into the application log.
+        digest = hashlib.sha256(raw_response.encode("utf-8", errors="replace")).hexdigest()[:16]
+        logger.warning("material QA model response failed JSON validation: length=%d sha256=%s", len(raw_response), digest)
 
     @staticmethod
     def _build_prompt(agent_input: MaterialQaAgentInput) -> str:

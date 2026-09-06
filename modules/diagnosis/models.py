@@ -148,6 +148,7 @@ class DiagnosisState(TypedDict, total=False):
     knowledge_point_states: dict[str, dict[str, Any]]
     answered_question_ids: list[str]
     diagnosis_round: int
+    task_mode: str
     questions: list[dict[str, Any]]
     correct_answers: dict[str, str]
     answers: dict[str, str]

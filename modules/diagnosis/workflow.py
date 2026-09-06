@@ -44,8 +44,11 @@ def build_diagnosis_graph(
             return {
                 "questions": state["questions"],
                 "correct_answers": state.get("correct_answers", {}),
-                "answers": {},
-                "answer_metadata": {},
+                # A persisted draft provides the same prepared question set
+                # plus already-submitted answers. Never erase those when the
+                # graph is reconstructed after navigation or a restart.
+                "answers": state.get("answers", {}),
+                "answer_metadata": state.get("answer_metadata", {}),
                 "status": "waiting_for_answers",
             }
         domain = {
@@ -220,18 +223,24 @@ class DiagnosisWorkflow:
     def start_diagnosis(self, *, user_id: str, book_id: str, learning_goal: str, learning_plan_day_id: int | None = None, learning_plan_item_id: int | None = None, task_mode: str = "diagnostic") -> dict[str, Any]:
         values = parse_start_fields(user_id, book_id, learning_goal)
         diagnosis_id = f"diag_{uuid4().hex[:10]}"
-        self.start(
+        started = self.start(
             diagnosis_id=diagnosis_id,
             user_id=values["user_id"],
             book_id=values["book_id"],
             learning_goal=values["learning_goal"], learning_plan_day_id=learning_plan_day_id, learning_plan_item_id=learning_plan_item_id, task_mode=task_mode,
         )
-        return {"diagnostic_id": diagnosis_id, "questions": self._state(diagnosis_id)["questions"]}
+        return {
+            "diagnostic_id": started["diagnosis_id"],
+            "questions": started["questions"],
+            "answers": started["answers"],
+            "skipped_question_ids": started["skipped_question_ids"],
+            "next_question_index": started["next_question_index"],
+        }
 
     def start(self, *, diagnosis_id: str, user_id: str, book_id: str, learning_goal: str, learning_plan_day_id: int | None = None, learning_plan_item_id: int | None = None, task_mode: str = "diagnostic") -> dict[str, Any]:
         database_binding: dict[str, int] | None = None
         # 先校验任务是否按计划解锁，避免在题目规划/缓存等待后才返回 400。
-        if learning_plan_day_id is not None and task_mode != "practice":
+        if learning_plan_day_id is not None:
             if self.database_repository is None:
                 raise RuntimeError("MySQL diagnosis repository is not configured")
             try:
@@ -239,9 +248,13 @@ class DiagnosisWorkflow:
                     user_id=int(user_id),
                     learning_plan_day_id=learning_plan_day_id,
                     learning_plan_item_id=learning_plan_item_id,
+                    session_type=2 if task_mode == "practice" else 1,
                 )
             except ValueError as exc:
                 raise ValidationAppError("daily diagnosis requires a numeric userId") from exc
+        draft = database_binding.get("draft") if database_binding else None
+        if isinstance(draft, dict) and draft.get("diagnosis_id"):
+            diagnosis_id = str(draft["diagnosis_id"])
         knowledge_point_states = self._knowledge_point_states(user_id, book_id)
         planning_history = self._planning_history(user_id, book_id)
         cached: dict[str, Any] | None = None
@@ -266,27 +279,49 @@ class DiagnosisWorkflow:
             point_id: {"next_review_at": item.get("nextReviewAt")}
             for point_id, item in knowledge_point_states.items()
         }
+        resumed_questions = draft.get("questions") if isinstance(draft, dict) else None
+        resumed_answers = draft.get("answers") if isinstance(draft, dict) else None
+        resumed_metadata = draft.get("answer_metadata") if isinstance(draft, dict) else None
+        resumed_correct_answers = draft.get("correct_answers") if isinstance(draft, dict) else None
         self.graph.invoke(
             {
                 "diagnosis_id": diagnosis_id,
                 "user_id": user_id,
                 "book_id": book_id,
                 "learning_goal": learning_goal,
+                "task_mode": task_mode,
                 "knowledge_point_mastery": mastery,
                 "knowledge_point_review": review_by_point,
                 "knowledge_point_states": knowledge_point_states,
                 "answered_question_ids": planning_history["answered_question_ids"],
                 "diagnosis_round": planning_history["diagnosis_round"],
-                "status": "started",
-                "questions": cached["questions"] if cached else [],
-                "correct_answers": cached.get("correct_answers", {}) if cached else {},
+                "status": "waiting_for_answers" if isinstance(resumed_questions, list) else "started",
+                "questions": resumed_questions if isinstance(resumed_questions, list) else cached["questions"] if cached else [],
+                "correct_answers": resumed_correct_answers if isinstance(resumed_correct_answers, dict) else cached.get("correct_answers", {}) if cached else {},
+                "answers": resumed_answers if isinstance(resumed_answers, dict) else {},
+                "answer_metadata": resumed_metadata if isinstance(resumed_metadata, dict) else {},
             },
             config=self._config(diagnosis_id),
         )
-        if learning_plan_day_id is not None and task_mode != "practice":
+        if learning_plan_day_id is not None:
             assert database_binding is not None
             self.graph.update_state(self._config(diagnosis_id), {"database_session_id": database_binding["session_id"], "database_plan_id": database_binding["plan_id"], "database_plan_item_id": database_binding.get("item_id")})
-        return {"type": "answer_request", "diagnosis_id": diagnosis_id, "questions": self._state(diagnosis_id)["questions"]}
+            self._save_draft(diagnosis_id)
+        state = self._state(diagnosis_id)
+        questions = state["questions"]
+        answers = state.get("answers", {})
+        next_question_index = next(
+            (index for index, question in enumerate(questions) if question["id"] not in answers),
+            max(0, len(questions) - 1),
+        )
+        return {
+            "type": "answer_request",
+            "diagnosis_id": diagnosis_id,
+            "questions": questions,
+            "answers": answers,
+            "skipped_question_ids": [question_id for question_id, answer in answers.items() if not answer],
+            "next_question_index": next_question_index,
+        }
 
     def submit_answer(
         self,
@@ -326,7 +361,32 @@ class DiagnosisWorkflow:
             self._config(diagnosis_id),
             {"answers": answers, "answer_metadata": metadata},
         )
+        self._save_draft(diagnosis_id)
         return {"diagnostic_id": diagnosis_id, "question_id": question_id, "saved": True}
+
+    def _save_draft(self, diagnosis_id: str) -> None:
+        """Write the resumable part of a planned diagnosis without finalising it."""
+
+        if self.database_repository is None:
+            return
+        state = self._state(diagnosis_id)
+        session_id = state.get("database_session_id")
+        if session_id is None:
+            return
+        saver = getattr(self.database_repository, "save_draft", None)
+        if not callable(saver):
+            return
+        saver(
+            session_id=int(session_id),
+            payload={
+                "diagnosis_id": diagnosis_id,
+                "questions": state.get("questions", []),
+                "correct_answers": state.get("correct_answers", {}),
+                "answers": state.get("answers", {}),
+                "answer_metadata": state.get("answer_metadata", {}),
+                "task_mode": state.get("task_mode", "diagnostic"),
+            },
+        )
 
     async def finish_diagnosis(self, diagnosis_id: str) -> dict[str, Any]:
         state = self._state(diagnosis_id)
