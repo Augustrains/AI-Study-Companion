@@ -3,7 +3,9 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import socket
 import subprocess
+import time
 from pathlib import Path
 from threading import Thread
 
@@ -16,6 +18,20 @@ from modules.common.config import Settings
 logger = logging.getLogger(__name__)
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 FRONTEND_DIR = PROJECT_DIR / "front" / "frontend"
+
+
+def wait_for_backend(host: str, port: int, timeout_seconds: float = 10) -> None:
+    """Wait for Uvicorn's socket before allowing the browser to issue requests."""
+
+    probe_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection((probe_host, port), timeout=0.2):
+                return
+        except OSError:
+            time.sleep(0.1)
+    raise RuntimeError(f"后端 API 未在 {timeout_seconds:g} 秒内启动：{probe_host}:{port}")
 
 
 def start_frontend(host: str, port: int, use_real_api: bool, api_base_url: str) -> subprocess.Popen[str]:
@@ -33,7 +49,11 @@ def start_frontend(host: str, port: int, use_real_api: bool, api_base_url: str) 
     environment["VITE_USE_REAL_API"] = "true" if use_real_api else "false"
     # Vite is a standalone development server here, not a reverse proxy. Point
     # it at Uvicorn; material-QA itself carries the /api/rag route prefix.
-    environment["VITE_API_BASE_URL"] = api_base_url
+    # Keep browser requests same-origin (5173 -> /api).  Vite proxies them to
+    # Uvicorn, avoiding the intermittent cross-port/CORS fetch failure that
+    # occurred after restarts when the browser called 8001 directly.
+    environment["VITE_API_BASE_URL"] = "/api"
+    environment["VITE_BACKEND_API_TARGET"] = api_base_url
     command = [node, "--require", str(vite_compatibility), str(vite_entry), "--host", host, "--port", str(port)]
     logger.info("启动前端: http://%s:%s", host, port)
     return subprocess.Popen(command, cwd=FRONTEND_DIR, env=environment, text=True)
@@ -71,6 +91,8 @@ def serve_web(host: str | None = None, backend_port: int | None = None, frontend
     backend_thread.start()
     frontend: subprocess.Popen[str] | None = None
     try:
+        # 后端线程的 bind 与前端首屏请求存在竞态；先探测端口就绪再打开浏览器。
+        wait_for_backend(host, backend_port)
         logger.info("启动后端 API: http://%s:%s", host, backend_port)
         api_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
         frontend = start_frontend(host, frontend_port, use_real_api, f"http://{api_host}:{backend_port}")

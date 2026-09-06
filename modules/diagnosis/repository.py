@@ -88,6 +88,14 @@ class MySqlDiagnosisRepository(MySqlLearningPlanRepository):
                 if cursor.fetchone() is None:
                     raise ValidationAppError("learningPlanItemId does not belong to learningPlanDayId")
                 self._assert_item_unlocked(cursor, user_id=user_id, item_id=item_id)
+                cursor.execute(
+                    "UPDATE learning_plan_day_item SET status = 'in_progress', started_at = COALESCE(started_at, %s), updated_at = %s WHERE id = %s",
+                    (now, now, item_id),
+                )
+                cursor.execute(
+                    "UPDATE learning_plan_day SET started_at = COALESCE(started_at, %s), updated_at = %s WHERE id = %s",
+                    (now, now, learning_plan_day_id),
+                )
             cursor.execute(
                 "INSERT INTO diagnostic_session (user_id, book_id, goal_id, session_type, learning_plan_day_id, total_questions, correct_count, created_at, updated_at) VALUES (%s, %s, %s, 1, %s, 0, 0, %s, %s)",
                 (user_id, binding["book_id"], binding["goal_id"], learning_plan_day_id, now, now),
@@ -161,8 +169,8 @@ class MySqlDiagnosisRepository(MySqlLearningPlanRepository):
             cursor.execute(
                 "UPDATE learning_plan_day_item item "
                 "JOIN diagnostic_session session ON session.learning_plan_day_id = item.learning_plan_day_id "
-                "SET item.status = 'completed', item.completed_at = COALESCE(item.completed_at, %s), item.updated_at = %s "
+                "SET item.status = 'completed', item.started_at = COALESCE(item.started_at, %s), item.completed_at = COALESCE(item.completed_at, %s), item.updated_at = %s "
                 "WHERE session.id = %s AND item.source = 'review_due' "
                 "AND item.status IN ('todo', 'in_progress')",
-                (now, now, session_id),
+                (now, now, now, session_id),
             )

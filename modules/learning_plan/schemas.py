@@ -14,6 +14,10 @@ class GenerateWeeklyLearningPlanRequest(BaseModel):
     book_id: int = Field(alias="bookId", gt=0)
     start_date: date | None = Field(default=None, alias="startDate")
     reason: str = Field(default="", max_length=1000)
+    # The planning dialog can optionally change the target and regenerate in
+    # one operation.  Keeping this on the planning request makes the new goal
+    # part of the exact context used to create the replacement tasks.
+    aim_level: int | None = Field(default=None, alias="aimLevel", ge=0, le=3)
 
 
 class WeeklyLearningPlanResponse(BaseModel):
@@ -44,3 +48,7 @@ class ReplanAfterDiagnosticRequest(BaseModel):
 class CompleteWeeklyPlanItemRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     user_id: int = Field(alias="userId", gt=0)
+
+class ExecuteCodeRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=50_000)
+    tests: list[str] = Field(min_length=1, max_length=20)

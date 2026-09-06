@@ -96,7 +96,7 @@ class WeeklyLearningPlanAgent:
             # BKT-driven learning sequence.
             review_items = self._build_due_review_items(review_states, scheduled, capacity, durations)
             capacity -= sum(int(item["minutes"]) for item in review_items)
-            learning_items = [*review_items, *self._build_day_learning_items(states, capacity, durations)]
+            learning_items = [*review_items, *self._build_day_learning_items(states, capacity, durations, coding=(index % 3 == 2))]
             requested_focus = next((state for state in states if state.get("user_requested_focus")), None)
             focus = requested_focus or (learning_items[0] if learning_items else self._next_focus(states))
             days.append(self._day(scheduled, index, focus, learning_items, durations, agent_input.regeneration_reason))
@@ -224,7 +224,7 @@ class WeeklyLearningPlanAgent:
         except ValueError:
             return False
 
-    def _build_day_learning_items(self, states: list[dict[str, Any]], capacity: int, durations: dict[str, int]) -> list[dict[str, Any]]:
+    def _build_day_learning_items(self, states: list[dict[str, Any]], capacity: int, durations: dict[str, int], coding: bool = False) -> list[dict[str, Any]]:
         """Schedule prerequisite reading, then at most one practice per point."""
 
         items: list[dict[str, Any]] = []
@@ -236,7 +236,8 @@ class WeeklyLearningPlanAgent:
                 state["reading_pending"] = False
                 capacity -= durations["reading"]
                 if capacity >= durations["practice"] and int(state["practice_remaining"]) > 0:
-                    items.append(self._practice_item(state, durations["practice"]))
+                    items.append(self._practice_item(state, durations["practice"], coding=coding))
+                    coding = False
                     practiced_today.add(int(state["knowledge_point_id"]))
                     capacity -= durations["practice"]
                 continue
@@ -244,7 +245,8 @@ class WeeklyLearningPlanAgent:
             state = self._next_practice(states, practiced_today)
             if state is None:
                 break
-            items.append(self._practice_item(state, durations["practice"]))
+            items.append(self._practice_item(state, durations["practice"], coding=coding))
+            coding = False
             practiced_today.add(int(state["knowledge_point_id"]))
             capacity -= durations["practice"]
         return items
@@ -293,6 +295,7 @@ class WeeklyLearningPlanAgent:
         has_reading = any(title.startswith("阅读：") for title in titles)
         review_count = sum(title.startswith(("复习：", "检索：")) for title in titles)
         practice_count = sum(title.startswith("练习：") for title in titles)
+        coding_count = sum(title.startswith("编程实践：") for title in titles)
         clauses = [f"当天先诊断“{focus_name}”，用于校准开始学习前的掌握度"]
         if has_reading:
             clauses.append("薄弱知识点先阅读建立概念框架")
@@ -300,6 +303,8 @@ class WeeklyLearningPlanAgent:
             clauses.append(f"安排 {review_count} 项历史到期内容进行间隔复习")
         if practice_count:
             clauses.append(f"再安排 {practice_count} 次针对性练习")
+        if coding_count:
+            clauses.append(f"安排 {coding_count} 项编程实践并通过测试验证")
         if not learning_items:
             clauses.append("后续任务将依据诊断结果动态调整")
         if regeneration_reason.strip():
@@ -319,7 +324,7 @@ class WeeklyLearningPlanAgent:
             "priority_score": float(state["priority_score"]),
         }
 
-    def _practice_item(self, state: dict[str, Any], minutes: int) -> dict[str, Any]:
+    def _practice_item(self, state: dict[str, Any], minutes: int, coding: bool = False) -> dict[str, Any]:
         sequence = int(state["next_practice_sequence"])
         question_ids = state.get("question_ids") or []
         question_id = question_ids[(sequence - 1) % len(question_ids)] if question_ids else None
@@ -328,10 +333,10 @@ class WeeklyLearningPlanAgent:
         state["next_practice_sequence"] = sequence + 1
         point_name = str(state["knowledge_point_name"])
         return {
-            "title": f"练习：{point_name}（第 {sequence} 次，{minutes}分钟）",
-            "description": f"完成一次围绕“{point_name}”的有效练习{reference}，记录错因并查看反馈。",
+            "title": f"编程实践：{point_name}（第 {sequence} 次，{minutes}分钟）" if coding else f"练习：{point_name}（第 {sequence} 次，{minutes}分钟）",
+            "description": f"根据“{point_name}”要求编写 Python 代码并运行测试用例。" if coding else f"完成一次围绕“{point_name}”的有效练习{reference}，记录错因并查看反馈。",
             "source": "weak_point",
-            "adaptive_reason": "BKT 预计仍需有效练习；同一知识点每天最多安排一次。",
+            "adaptive_reason": "结合本地教材编程/项目任务进行可验证实践。" if coding else "BKT 预计仍需有效练习；同一知识点每天最多安排一次。",
             "knowledge_point_id": int(state["knowledge_point_id"]),
             "knowledge_point_name": point_name,
             "minutes": minutes,

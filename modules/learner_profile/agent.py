@@ -21,6 +21,8 @@ class KnowledgePointAgentInput:
     current_confusions: str = ""
     additional_requirements: str = ""
     preferred_activity_types: list[str] | None = None
+    preferred_difficulty: str = "adaptive"
+    learning_frequency: str = "flexible"
     session_duration_minutes: int | None = None
 
     # ``learning_goal.aim_level`` is intentionally stored as a stable numeric
@@ -56,6 +58,8 @@ class KnowledgePointAgentInput:
             f"当前困惑：{self.current_confusions.strip() or '未说明'}\n"
             f"附加要求：{self.additional_requirements.strip() or '未说明'}\n"
             f"偏好活动：{activities}\n"
+            f"难度倾向：{self.preferred_difficulty}\n"
+            f"学习频率：{self.learning_frequency}\n"
             f"单次学习时长：{duration}"
         )
 

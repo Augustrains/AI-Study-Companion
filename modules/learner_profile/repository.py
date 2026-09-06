@@ -73,7 +73,7 @@ class MySqlLearnerProfileRepository:
     def load(self, user_id: int, book_id: int) -> dict[str, Any] | None:
         with self.connection() as connection:
             cursor = connection.cursor(dictionary=True)
-            profile = self._one(cursor, "SELECT background, preferred_content_style, self_assessed_level, current_confusions, additional_requirements, preferred_activity_types, session_duration_minutes FROM learner_profile WHERE user_id = %s ORDER BY updated_at DESC, id DESC LIMIT 1", (user_id,))
+            profile = self._one(cursor, "SELECT background, preferred_content_style, preferred_difficulty, learning_frequency, self_assessed_level, current_confusions, additional_requirements, preferred_activity_types, session_duration_minutes FROM learner_profile WHERE user_id = %s ORDER BY updated_at DESC, id DESC LIMIT 1", (user_id,))
             goal = self._one(cursor, "SELECT id, goal, aim_level, daily_minutes, start_date, target_date, status FROM learning_goal WHERE user_id = %s AND book_id = %s ORDER BY status ASC, updated_at DESC, id DESC LIMIT 1", (user_id, book_id))
             if profile is None and goal is None:
                 return None
@@ -92,6 +92,8 @@ class MySqlLearnerProfileRepository:
                 "book_id": book_id,
                 "background": (profile or {}).get("background", ""),
                 "preferred_content_style": (profile or {}).get("preferred_content_style", "balanced"),
+                "preferred_difficulty": (profile or {}).get("preferred_difficulty") or "adaptive",
+                "learning_frequency": (profile or {}).get("learning_frequency") or "flexible",
                 "self_assessed_level": (profile or {}).get("self_assessed_level") or "unknown",
                 "current_confusions": (profile or {}).get("current_confusions") or "",
                 "additional_requirements": (profile or {}).get("additional_requirements") or "",
@@ -114,6 +116,8 @@ class MySqlLearnerProfileRepository:
             profile_values = (
                 payload["background"],
                 payload["preferred_content_style"],
+                payload.get("preferred_difficulty") or "adaptive",
+                payload.get("learning_frequency") or "flexible",
                 payload.get("self_assessed_level") or "unknown",
                 payload.get("current_confusions") or "",
                 payload.get("additional_requirements") or "",
@@ -121,9 +125,9 @@ class MySqlLearnerProfileRepository:
                 payload.get("session_duration_minutes"),
             )
             if profile:
-                cursor.execute("UPDATE learner_profile SET background = %s, preferred_content_style = %s, self_assessed_level = %s, current_confusions = %s, additional_requirements = %s, preferred_activity_types = %s, session_duration_minutes = %s, updated_at = %s WHERE id = %s", (*profile_values, now, profile["id"]))
+                cursor.execute("UPDATE learner_profile SET background = %s, preferred_content_style = %s, preferred_difficulty = %s, learning_frequency = %s, self_assessed_level = %s, current_confusions = %s, additional_requirements = %s, preferred_activity_types = %s, session_duration_minutes = %s, updated_at = %s WHERE id = %s", (*profile_values, now, profile["id"]))
             else:
-                cursor.execute("INSERT INTO learner_profile (id, user_id, background, preferred_content_style, self_assessed_level, current_confusions, additional_requirements, preferred_activity_types, session_duration_minutes, created_at, updated_at) VALUES (UUID_SHORT(), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)", (user_id, *profile_values, now, now))
+                cursor.execute("INSERT INTO learner_profile (id, user_id, background, preferred_content_style, preferred_difficulty, learning_frequency, self_assessed_level, current_confusions, additional_requirements, preferred_activity_types, session_duration_minutes, created_at, updated_at) VALUES (UUID_SHORT(), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)", (user_id, *profile_values, now, now))
             goal = self._one(cursor, "SELECT id FROM learning_goal WHERE user_id = %s AND book_id = %s AND status = 0 ORDER BY updated_at DESC, id DESC LIMIT 1", (user_id, book_id))
             values = (payload["goal"], payload["aim_level"], payload["daily_minutes"], payload.get("start_date"), payload.get("target_date"), now)
             if goal:

@@ -149,7 +149,11 @@ export type LearningActivity = {
   result: Record<string, unknown>;
   detail: Record<string, unknown>;
 };
-export type LearningActivityList = { records: LearningActivity[]; total: number; page: number; pageSize: number; hasNext: boolean };
+export type LearningRecordSummary = {
+  today: { activityCount: number; completedTasks: number; studyMinutes: number; diagnosticAccuracy: number | null };
+  calendar: Array<{ date: string; activityCount: number; completedTasks: number; studyMinutes: number }>;
+};
+export type LearningActivityList = { records: LearningActivity[]; total: number; page: number; pageSize: number; hasNext: boolean; summary?: LearningRecordSummary };
 export type LearnerPreferences = {
   activity_types: string[];
   content_style: string;
@@ -188,6 +192,10 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
       ? 270000
     : path === "/diagnostics/start"
       ? 45000
+      // 重建学习画像会依次调用目标分析和掌握度分析智能体，
+      // 保存接口不能使用普通读请求的 15 秒超时。
+      : path === "/learner-profile/setup" && init?.method === "POST"
+        ? 120000
       : path.includes("/learner-calibrations")
         ? 120000
         : 15000;
@@ -367,12 +375,21 @@ export const mockApi = {
       })(),
     };
   },
-  async writeLearningEvent(payload: { taskId: string; eventType: string; status: string; durationSeconds?: number; plannedMinutes?: number }) {
+  async writeLearningEvent(payload: { taskId: string; eventType: string; status: string; bookId?: BookId; durationSeconds?: number; plannedMinutes?: number }) {
     await wait(260);
     return { eventId: `event-${Date.now()}`, ...payload, saved: true };
   },
   async completeLearningPlanItem(_itemId: string) { await wait(120); return { completed: true }; },
-  async getLearningRecords(_params?: { category?: string; page?: number; pageSize?: number }): Promise<LearningActivityList> {
+  async startLearningPlanItem(_itemId: string) { await wait(120); return { started: true }; },
+  async executeCode(_code: string, _tests: string[]) {
+    await wait(120);
+    return { passed: true, stdout: "", stderr: "", timed_out: false };
+  },
+  async getCodeTaskContent(_itemId: string) {
+    await wait(120);
+    return { kind: "coding", prompt: "情景：你正在为数据处理服务实现一个小工具。请根据函数签名完成代码，处理正常输入和边界情况，不修改原始输入，并通过下面的测试用例。", starter_code: "def solve(values):\n    # 返回处理结果\n    pass\n", tests: ["assert solve([]) == []", "assert solve([3, 1, 2]) == [1, 2, 3]"] };
+  },
+  async getLearningRecords(_params?: { category?: string; startDate?: string; endDate?: string; page?: number; pageSize?: number }): Promise<LearningActivityList> {
     await wait(260);
     return { records: [], total: 0, page: 1, pageSize: 50, hasNext: false };
   },
@@ -432,7 +449,7 @@ function asLearningPlan(payload: WeeklyPlanPayload, bookId: BookId): LearningPla
     const dayTasks = items.map((item, index) => ({
       id: String(item.id ?? `${day.expected_date ?? day.date ?? "day"}-${index}`),
       title: item.title,
-      type: item.item_type === "diagnostic" || item.source === "review_due" ? "能力诊断" : item.item_type === "reading" ? "阅读" : item.item_type === "review" || item.source === "spaced_review" ? "复习" : item.item_type === "practice" ? "练习" : "针对性学习",
+      type: item.item_type === "diagnostic" || item.source === "review_due" ? "能力诊断" : item.item_type === "reading" ? "阅读" : item.item_type === "review" || item.source === "spaced_review" ? "复习" : item.item_type === "practice" ? "练习" : item.item_type === "coding" ? "编程实践" : "针对性学习",
       minutes: planMinutes(item),
       status: item.status ?? "todo",
       reason: item.adaptive_reason ?? "",
@@ -460,6 +477,8 @@ type MySqlProfileSetup = {
   profile: {
     background: string;
     preferred_content_style: string;
+    preferred_difficulty?: string;
+    learning_frequency?: string;
     self_assessed_level?: string;
     current_confusions?: string;
     additional_requirements?: string;
@@ -507,9 +526,9 @@ function asLearnerProfile(response: MySqlProfileSetup, userId: string, learningD
       preferences: {
         activity_types: profile.preferred_activity_types ?? [],
         content_style: profile.preferred_content_style ?? "balanced",
-        difficulty: "adaptive",
+        difficulty: profile.preferred_difficulty ?? "adaptive",
         session_duration_minutes: profile.session_duration_minutes ?? 30,
-        learning_frequency: "flexible",
+        learning_frequency: profile.learning_frequency ?? "flexible",
       },
     },
   };
@@ -581,11 +600,14 @@ export const realApi = {
   // 后续 answers / finish / 校准都按 diagnosticId 找回同一个用户，不需要再传。
   startDiagnostic: (bookId: BookId, learningGoal?: string, planDayId?: string, planItemId?: string, taskMode: "diagnostic" | "practice" = "diagnostic") => request<DiagnosticStartResult>("/diagnostics/start", { method: "POST", body: JSON.stringify({ bookId, learningGoal, userId: getCurrentUserId(), learningPlanDayId: planDayId ? Number(planDayId) : undefined, learningPlanItemId: planItemId ? Number(planItemId) : undefined, taskMode }) }),
   completeLearningPlanItem: (itemId: string) => request(`/learning-plans/weekly/items/${itemId}/complete`, { method: "POST", body: JSON.stringify({ userId: getCurrentUserId() }) }),
+  startLearningPlanItem: (itemId: string) => request(`/learning-plans/weekly/items/${itemId}/start`, { method: "POST", body: JSON.stringify({ userId: getCurrentUserId() }) }),
+  executeCode: (code: string, tests: string[]) => request<{ passed: boolean; stdout: string; stderr: string; timed_out: boolean }>("/learning-plans/code/execute", { method: "POST", body: JSON.stringify({ code, tests }) }),
+  getCodeTaskContent: (itemId: string) => request<{ kind: string; prompt?: string; starter_code?: string; tests?: string[]; message?: string }>(`/learning-plans/weekly/items/${encodeURIComponent(itemId)}/content`),
   submitDiagnosticAnswer: (diagnosticId: string, payload: { questionId: string; answer: string; skipped?: boolean }) => request(`/diagnostics/${diagnosticId}/answers`, { method: "POST", body: JSON.stringify(payload) }),
   finishDiagnostic: (diagnosticId: string) => request<DiagnosticResult>(`/diagnostics/${diagnosticId}/finish`, { method: "POST" }),
   submitCalibration: (payload: { diagnosticId: string; level: string; reason: string }) => request("/learner-calibrations", { method: "POST", body: JSON.stringify(payload) }),
-  generateWeeklyPlan: async (bookId: BookId, reason = ""): Promise<LearningPlanResult> => {
-    const response = await request<WeeklyPlanPayload>("/learning-plans/weekly/generate", { method: "POST", body: JSON.stringify({ userId: Number(getCurrentUserId()), bookId: databaseBookId[bookId], reason }) });
+  generateWeeklyPlan: async (bookId: BookId, reason = "", aimLevel?: number): Promise<LearningPlanResult> => {
+    const response = await request<WeeklyPlanPayload>("/learning-plans/weekly/generate", { method: "POST", body: JSON.stringify({ userId: Number(getCurrentUserId()), bookId: databaseBookId[bookId], reason, ...(aimLevel === undefined ? {} : { aimLevel }) }) });
     return asLearningPlan(response, bookId);
   },
   createMaterialPlan: (payload: MaterialLearningPlanPayload) => request<LearningPlanResult>("/learning-plans/material", { method: "POST", body: JSON.stringify({ ...payload, userId: getCurrentUserId() }) }),
@@ -599,10 +621,12 @@ export const realApi = {
     return request<ReadingMaterialResult>(`/learning-plans/weekly/materials?${query.toString()}`);
   },
   getTodayLearning: (bookId: BookId) => request<TodayLearningResponse>(`/today-learning?userId=${encodeURIComponent(getCurrentUserId())}&bookId=${encodeURIComponent(bookId)}`),
-  writeLearningEvent: (payload: { taskId: string; taskTitle: string; eventType: string; status: string; durationSeconds?: number; plannedMinutes?: number }) => request("/learning-events", { method: "POST", body: JSON.stringify({ ...payload, userId: getCurrentUserId() }) }),
-  getLearningRecords: (params?: { category?: string; page?: number; pageSize?: number }) => {
+  writeLearningEvent: (payload: { taskId: string; taskTitle: string; eventType: string; status: string; bookId?: BookId; durationSeconds?: number; plannedMinutes?: number }) => request("/learning-events", { method: "POST", body: JSON.stringify({ ...payload, userId: getCurrentUserId() }) }),
+  getLearningRecords: (params?: { category?: string; startDate?: string; endDate?: string; page?: number; pageSize?: number }) => {
     const query = new URLSearchParams({ userId: getCurrentUserId(), page: String(params?.page ?? 1), pageSize: String(params?.pageSize ?? 50) });
     if (params?.category && params.category !== "all") query.set("category", params.category);
+    if (params?.startDate) query.set("startDate", params.startDate);
+    if (params?.endDate) query.set("endDate", params.endDate);
     return request<LearningActivityList>(`/learning-records?${query.toString()}`);
   },
   askQuestion: (payload: QaQuestionPayload) => request<QaResult>(`/rag/conversations/${encodeURIComponent(payload.conversationId ?? "")}/messages`, { method: "POST", body: JSON.stringify({ bookId: payload.bookId, question: payload.question, userId: getCurrentUserId(), allowGeneralFallback: payload.allowGeneralFallback ?? false, answerMode: payload.answerMode ?? "direct", learningTaskId: payload.learningTaskId ?? null }) }),
@@ -627,6 +651,8 @@ export const realApi = {
         book_id: book.databaseBookId,
         background: payload.background,
         preferred_content_style: payload.preferences.content_style,
+        preferred_difficulty: payload.preferences.difficulty,
+        learning_frequency: payload.preferences.learning_frequency,
         self_assessed_level: payload.self_assessed_level,
         current_confusions: payload.current_confusions,
         additional_requirements: payload.additional_requirements,

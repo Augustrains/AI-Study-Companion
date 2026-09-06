@@ -27,6 +27,7 @@ tmp/
 
 # Local comparison/checkout copy
 StudyCompanion-Hector/
+front/frontend/.plan-ui-backup-*/
 
 # Generated local AI assets and runtime persistence
 models/

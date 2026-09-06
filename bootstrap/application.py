@@ -24,6 +24,7 @@ from modules.learning_plan.agent import WeeklyLearningPlanAgent
 from modules.learning_plan.pace import LearningPaceAgent
 from modules.learning_plan.repository import MySqlLearningPlanRepository
 from modules.learning_record.module import LearningRecordModule
+from modules.learning_record.repository import MySqlLearningRecordRepository
 from modules.today_learning.module import TodayLearningModule
 from modules.material_qa.agent import MaterialQaAgent
 from modules.material_qa.repository import MysqlMaterialQaMessageStore
@@ -61,7 +62,7 @@ def build_api_dependencies(settings: common_api.config.Settings | None = None) -
         settings.knowledge_points_dir
     )
     llm_client = DeepSeekLLMClient.from_env()
-    learning_record_module = LearningRecordModule()
+    learning_record_module = LearningRecordModule(repository=MySqlLearningRecordRepository.from_env())
     # 用户身份必须与其余学习数据共用 MySQL 的 users.user_id。此前认证
     # 模块没有挂载到 API，前端才会回退到 local_xxx 身份，导致画像和计划
     # 无法按用户关联。

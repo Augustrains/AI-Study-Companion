@@ -51,13 +51,18 @@ class TodayLearningModule:
             )
         except ValueError:
             plan = None
+        tasks = self._tasks_for_today(plan)
+        all_tasks = self._all_tasks(plan)
+        task_titles = {str(task.get("title") or "") for task in all_tasks}
         activities = [
             activity
             for activity in self.learning_record.list_activities(values["user_id"], page=1, page_size=100)["records"]
             if activity.book_id in {book_key, RECORD_BOOK_IDS.get(book_key, book_key)}
+            # Older task events were saved before book_id was included.  Keep
+            # those events only when their title matches this plan, avoiding
+            # cross-book leakage while recovering their recorded duration.
+            or (not activity.book_id and activity.category == "task" and str(activity.detail.get("task_title") or "") in task_titles)
         ]
-        tasks = self._tasks_for_today(plan)
-        all_tasks = self._all_tasks(plan)
         goal = str((plan or {}).get("plan", {}).get("goal") or self._latest_goal(activities) or "")
         graph = self._knowledge_graph(activities, goal, tasks)
         progress = self._weekly_progress(activities, all_tasks)
@@ -111,9 +116,15 @@ class TodayLearningModule:
                     "status": str(item["status"]),
                     "reason": str(item.get("adaptive_reason") or day.get("adaptive_reason") or ""),
                     "description": str(item.get("description") or ""),
-                    "knowledgePointIds": [],
-                    "planDayId": str(day.get("id")),
-                    "expectedCompletionDate": expected_date,
+                "knowledgePointIds": [],
+                "planDayId": str(day.get("id")),
+                "expectedCompletionDate": expected_date,
+                # These timestamps are the authoritative execution timeline.
+                # LearningActivity is an audit trail and can be absent for
+                # legacy tasks, so the dashboard must not depend on it for
+                # elapsed study time.
+                "startedAt": item.get("started_at"),
+                "completedAt": item.get("completed_at"),
                 })
         return result
 
@@ -186,20 +197,42 @@ class TodayLearningModule:
     def _weekly_progress(activities: list[LearningActivity], tasks: list[dict[str, Any]]) -> WeeklyProgress:
         now = datetime.now(timezone.utc)
         start = now - timedelta(days=now.weekday())
-        weekly = []
         daily: dict[str, int] = {}
         correct = total = 0
+
+        # Prefer the timestamps persisted with the plan item.  A task event
+        # used to be the only source here, which meant MySQL could contain a
+        # perfectly valid started_at/completed_at pair while this card still
+        # displayed 0 h.
+        timed_task_ids: set[str] = set()
+        for task in tasks:
+            started = TodayLearningModule._as_utc_datetime(task.get("startedAt"))
+            completed_at = TodayLearningModule._as_utc_datetime(task.get("completedAt"))
+            if started is None or completed_at is None or completed_at <= started or completed_at < start:
+                continue
+            seconds = int((completed_at - started).total_seconds())
+            if seconds <= 0:
+                continue
+            timed_task_ids.add(str(task.get("id", "")))
+            key = completed_at.date().isoformat()
+            daily[key] = daily.get(key, 0) + seconds
+
         for activity in activities:
             try:
                 occurred = datetime.fromisoformat(activity.occurred_at.replace("Z", "+00:00"))
             except ValueError:
                 continue
+            if occurred.tzinfo is None:
+                occurred = occurred.replace(tzinfo=timezone.utc)
             if occurred < start:
                 continue
-            weekly.append(activity)
+            # Keep activity data as a compatibility fallback for imported or
+            # older records without task timestamps, but never count a task
+            # twice.
             seconds = int(activity.result.get("duration_seconds", activity.result.get("durationSeconds", 0)) or 0)
-            key = occurred.date().isoformat()
-            daily[key] = daily.get(key, 0) + seconds
+            if str(activity.task_id or "") not in timed_task_ids:
+                key = occurred.date().isoformat()
+                daily[key] = daily.get(key, 0) + seconds
             correct += int(activity.result.get("correct_count", activity.result.get("correctCount", 0)) or 0)
             total += int(activity.result.get("total_count", activity.result.get("totalCount", 0)) or 0)
         completed = sum(task.get("status") == "completed" for task in tasks)
@@ -212,6 +245,21 @@ class TodayLearningModule:
             accuracy=round(correct / total * 100, 2) if total else 0,
             daily_duration=[{"date": day, "durationSeconds": seconds} for day, seconds in sorted(daily.items())],
         )
+
+    @staticmethod
+    def _as_utc_datetime(value: Any) -> datetime | None:
+        """Parse MySQL or JSON timestamps into a comparable UTC datetime."""
+        if isinstance(value, datetime):
+            parsed = value
+        elif isinstance(value, str) and value:
+            try:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+        else:
+            return None
+        # MySQL DATETIME values are stored without a zone in this project.
+        return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
 
     @staticmethod
     def _recommendation(tasks: list[dict[str, Any]], graph: dict[str, Any]) -> dict[str, Any] | None:

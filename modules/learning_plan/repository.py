@@ -24,6 +24,8 @@ class MySqlLearningPlanRepository(MySqlLearnerProfileRepository):
             return "review"
         if title.startswith("练习"):
             return "practice"
+        if title.startswith("编程实践"):
+            return "coding"
         return "text_learning"
 
     def ensure_prepared_content_schema(self) -> None:
@@ -48,6 +50,43 @@ class MySqlLearningPlanRepository(MySqlLearnerProfileRepository):
             for name, definition in definitions.items():
                 if name not in columns:
                     cursor.execute(f"ALTER TABLE learning_plan_day_item ADD COLUMN {name} {definition}")
+
+    def update_goal_aim_level(self, *, user_id: int, book_id: int, aim_level: int) -> None:
+        """Persist a target change before rebuilding only the unfinished work.
+
+        The knowledge-point target scores are kept in step with the overall
+        goal, so prioritisation immediately reflects the learner's new target.
+        Completed plan items are deliberately not touched here.
+        """
+        labels = (
+            "能够复述核心概念",
+            "能够独立完成基础练习",
+            "能够解决进阶应用问题",
+            "能够指导他人 / 应对面试",
+        )
+        if aim_level < 0 or aim_level >= len(labels):
+            raise ValidationAppError("aim_level must be between 0 and 3")
+        now = datetime.now().replace(microsecond=0)
+        with self.connection() as connection:
+            cursor = connection.cursor(dictionary=True)
+            cursor.execute(
+                "SELECT id FROM learning_goal WHERE user_id = %s AND book_id = %s AND status = 0 "
+                "ORDER BY updated_at DESC, id DESC LIMIT 1 FOR UPDATE",
+                (user_id, book_id),
+            )
+            goal = cursor.fetchone()
+            if goal is None:
+                raise ValidationAppError("an active learning goal is required", details={"user_id": user_id, "book_id": book_id})
+            goal_id = int(goal["id"])
+            cursor.execute(
+                "UPDATE learning_goal SET goal = %s, aim_level = %s, updated_at = %s WHERE id = %s",
+                (labels[aim_level], aim_level, now, goal_id),
+            )
+            cursor.execute(
+                "UPDATE knowledge_point_master SET aim_score = %s, updated_at = %s "
+                "WHERE user_id = %s AND goal_id = %s",
+                (float(aim_level) / 3.0, now, user_id, goal_id),
+            )
 
     def ensure_initial_mastery_records(self, *, user_id: int, book_id: int) -> int:
         """Backfill baseline mastery for a legacy, otherwise complete profile.
@@ -204,6 +243,13 @@ class MySqlLearningPlanRepository(MySqlLearnerProfileRepository):
             )
             return list(cursor.fetchall())
 
+    def load_plan_item_title(self, *, item_id: int) -> str | None:
+        with self.connection() as connection:
+            cursor = connection.cursor(dictionary=True)
+            cursor.execute("SELECT title FROM learning_plan_day_item WHERE id = %s", (item_id,))
+            row = cursor.fetchone()
+        return str(row["title"]) if row and row.get("title") else None
+
     def load_prepared_content(self, *, item_id: int) -> dict[str, Any] | None:
         with self.connection() as connection:
             cursor = connection.cursor(dictionary=True)
@@ -312,10 +358,51 @@ class MySqlLearningPlanRepository(MySqlLearnerProfileRepository):
                 self._assert_item_unlocked(cursor, user_id=user_id, item_id=item_id)
             if item["status"] != "completed":
                 cursor.execute(
-                    "UPDATE learning_plan_day_item SET status = 'completed', completed_at = COALESCE(completed_at, %s), updated_at = %s WHERE id = %s",
+                    # 任务可能由阅读弹窗直接完成，未必先写入 started_at；
+                    # 补齐开始时间和完成时间，保证 MySQL 中有完整时间链路。
+                    "UPDATE learning_plan_day_item SET status = 'completed', started_at = COALESCE(started_at, %s), completed_at = COALESCE(completed_at, %s), updated_at = %s WHERE id = %s",
+                    (now, now, now, item_id),
+                )
+                cursor.execute(
+                    "UPDATE learning_plan_day_item SET started_at = COALESCE(started_at, %s) WHERE id = %s",
+                    (now, item_id),
+                )
+            cursor.execute("SELECT learning_plan_day_id, started_at FROM learning_plan_day_item WHERE id = %s", (item_id,))
+            day_ref = cursor.fetchone()
+            if day_ref and day_ref.get("learning_plan_day_id"):
+                day_id = int(day_ref["learning_plan_day_id"])
+                cursor.execute("UPDATE learning_plan_day SET started_at = COALESCE(started_at, %s), updated_at = %s WHERE id = %s", (day_ref.get("started_at") or now, now, day_id))
+                cursor.execute("SELECT COUNT(*) AS pending FROM learning_plan_day_item WHERE learning_plan_day_id = %s AND status NOT IN ('completed','skipped','rescheduled')", (day_id,))
+                if int(cursor.fetchone()["pending"] or 0) == 0:
+                    cursor.execute("UPDATE learning_plan_day SET completed_at = COALESCE(completed_at, %s), updated_at = %s WHERE id = %s", (now, now, day_id))
+            return {"item_id": int(item["id"]), "title": str(item["title"]), "status": "completed"}
+
+    def start_weekly_plan_item(self, *, user_id: int, item_id: int) -> dict[str, Any]:
+        """Persist the moment a learner starts a plan item."""
+        now = datetime.now().replace(microsecond=0)
+        with self.connection() as connection:
+            cursor = connection.cursor(dictionary=True)
+            cursor.execute(
+                "SELECT item.id, item.title, item.status, item.learning_plan_day_id FROM learning_plan_day_item item "
+                "JOIN learning_plan_day day ON day.id = item.learning_plan_day_id "
+                "JOIN learning_plan plan ON plan.id = day.plan_id "
+                "WHERE item.id = %s AND plan.user_id = %s AND plan.status = 'active'",
+                (item_id, user_id),
+            )
+            item = cursor.fetchone()
+            if item is None:
+                raise ValidationAppError("learning-plan item does not belong to an active user plan", details={"item_id": item_id, "user_id": user_id})
+            if item["status"] != "completed":
+                self._assert_item_unlocked(cursor, user_id=user_id, item_id=item_id)
+                cursor.execute(
+                    "UPDATE learning_plan_day_item SET status = 'in_progress', started_at = COALESCE(started_at, %s), updated_at = %s WHERE id = %s",
                     (now, now, item_id),
                 )
-            return {"item_id": int(item["id"]), "title": str(item["title"]), "status": "completed"}
+                cursor.execute(
+                    "UPDATE learning_plan_day SET started_at = COALESCE(started_at, %s), updated_at = %s WHERE id = %s",
+                    (now, now, int(item["learning_plan_day_id"])),
+                )
+            return {"item_id": int(item["id"]), "title": str(item["title"]), "status": "completed" if item["status"] == "completed" else "in_progress"}
 
     def plan_requires_rollover(self, *, user_id: int, item_id: int) -> bool:
         """Whether completing this item finished (or expired) the active 7-day window."""
@@ -477,30 +564,82 @@ class MySqlLearningPlanRepository(MySqlLearnerProfileRepository):
             cursor.execute("UPDATE learning_plan SET adaptive_version = adaptive_version + 1, updated_at = %s WHERE id = %s", (now, plan_id))
 
     def replace_weekly_plan(self, *, context: dict[str, Any], days: list[dict[str, Any]]) -> int:
-        """Supersede only this user's active plan for this goal, then write all layers."""
+        """Correct only unfinished items in the current active weekly plan.
+
+        A replan must not turn completed work into a new copy or move it into a
+        replacement plan.  It therefore keeps the current plan and its
+        completed rows in place, replacing only ``todo``/``in_progress``/
+        ``skipped`` rows for dates in the regenerated window.
+        """
         now = datetime.now().replace(microsecond=0)
         user_id, book_id, goal_id = int(context["user_id"]), int(context["book"]["id"]), int(context["goal"]["id"])
         with self.connection() as connection:
             cursor = connection.cursor(dictionary=True)
             cursor.execute(
-                "UPDATE learning_plan SET status = 'superseded', updated_at = %s "
-                "WHERE user_id = %s AND book_id = %s AND goal_id = %s AND status = 'active'",
-                (now, user_id, book_id, goal_id),
+                "SELECT id, window_start_date FROM learning_plan "
+                "WHERE user_id = %s AND book_id = %s AND status = 'active' "
+                "ORDER BY updated_at DESC, id DESC LIMIT 1 FOR UPDATE",
+                (user_id, book_id),
             )
-            cursor.execute(
-                "INSERT INTO learning_plan (user_id, book_id, goal_id, status, window_start_date, window_end_date, daily_minutes, adaptive_version, created_at, updated_at) "
-                "VALUES (%s, %s, %s, 'active', %s, %s, %s, 1, %s, %s)",
-                (user_id, book_id, goal_id, days[0]["date"], days[-1]["date"], int(context["goal"]["daily_minutes"]), now, now),
-            )
-            plan_id = int(cursor.lastrowid)
+            active_plan = cursor.fetchone()
+            if active_plan is None:
+                cursor.execute(
+                    "INSERT INTO learning_plan (user_id, book_id, goal_id, status, window_start_date, window_end_date, daily_minutes, adaptive_version, created_at, updated_at) "
+                    "VALUES (%s, %s, %s, 'active', %s, %s, %s, 1, %s, %s)",
+                    (user_id, book_id, goal_id, days[0]["date"], days[-1]["date"], int(context["goal"]["daily_minutes"]), now, now),
+                )
+                plan_id = int(cursor.lastrowid)
+            else:
+                plan_id = int(active_plan["id"])
+                cursor.execute(
+                    "UPDATE learning_plan SET goal_id = %s, window_end_date = %s, daily_minutes = %s, "
+                    "adaptive_version = adaptive_version + 1, updated_at = %s WHERE id = %s",
+                    (goal_id, days[-1]["date"], int(context["goal"]["daily_minutes"]), now, plan_id),
+                )
             for day in days:
                 cursor.execute(
-                    "INSERT INTO learning_plan_day (plan_id, title, adaptive_reason, expected_date, generated_version, priority_score, created_at, updated_at) "
-                    "VALUES (%s, %s, %s, %s, 1, %s, %s, %s)",
-                    (plan_id, day["title"], day["adaptive_reason"], day["date"], day["priority_score"], now, now),
+                    "SELECT id FROM learning_plan_day WHERE plan_id = %s AND expected_date = %s "
+                    "ORDER BY id LIMIT 1 FOR UPDATE",
+                    (plan_id, day["date"]),
                 )
-                day_id = int(cursor.lastrowid)
-                for item in day["items"]:
+                existing_day = cursor.fetchone()
+                if existing_day is None:
+                    cursor.execute(
+                        "INSERT INTO learning_plan_day (plan_id, title, adaptive_reason, expected_date, generated_version, priority_score, created_at, updated_at) "
+                        "VALUES (%s, %s, %s, %s, 1, %s, %s, %s)",
+                        (plan_id, day["title"], day["adaptive_reason"], day["date"], day["priority_score"], now, now),
+                    )
+                    day_id = int(cursor.lastrowid)
+                    completed_titles: set[str] = set()
+                    unfinished_count = 1
+                else:
+                    day_id = int(existing_day["id"])
+                    cursor.execute(
+                        "SELECT title, status FROM learning_plan_day_item WHERE learning_plan_day_id = %s FOR UPDATE",
+                        (day_id,),
+                    )
+                    existing_items = cursor.fetchall()
+                    completed_titles = {str(item["title"]) for item in existing_items if item["status"] == "completed"}
+                    unfinished_count = sum(1 for item in existing_items if item["status"] != "completed")
+
+                    # A day that has already been fully finished is historical
+                    # evidence, not a source of extra replacement tasks.
+                    if completed_titles and unfinished_count == 0:
+                        continue
+
+                    cursor.execute(
+                        "DELETE FROM learning_plan_day_item WHERE learning_plan_day_id = %s AND status <> 'completed'",
+                        (day_id,),
+                    )
+                    cursor.execute(
+                        "UPDATE learning_plan_day SET title = %s, adaptive_reason = %s, generated_version = generated_version + 1, "
+                        "priority_score = %s, updated_at = %s WHERE id = %s",
+                        (day["title"], day["adaptive_reason"], day["priority_score"], now, day_id),
+                    )
+
+                # Do not insert a fresh pending duplicate for an item the
+                # learner has already completed on this date.
+                for item in (item for item in day["items"] if str(item["title"]) not in completed_titles):
                     cursor.execute(
                         "INSERT INTO learning_plan_day_item (learning_plan_day_id, title, description, status, source, adaptive_reason, item_type, created_at, updated_at) "
                         "VALUES (%s, %s, %s, 'todo', %s, %s, %s, %s, %s)",
