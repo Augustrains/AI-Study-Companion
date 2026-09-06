@@ -11,12 +11,15 @@ from fastapi.responses import JSONResponse
 from modules.common import api as common_api
 from modules.auth.api import build_router as build_auth_router
 from modules.diagnosis.api import build_router as build_diagnosis_router
+from modules.learner_goals.api import build_router as build_learner_goals_router
 from modules.learner_profile.api import build_router as build_profile_router
 from modules.learner_goals.api import build_router as build_learner_goal_router
 from modules.learning_plan.api import build_router as build_learning_plan_router
 from modules.material_qa.api import build_router as build_material_qa_router
 from modules.learning_record.api import build_router as build_learning_record_router
 from modules.today_learning.api import build_router as build_today_learning_router
+from modules.practice.api import build_router as build_practice_router
+from modules.practice.repository import PracticeRepository
 
 
 logger = logging.getLogger(__name__)
@@ -28,7 +31,7 @@ def create_app(dependencies: Any, *, lifespan: Any = None) -> FastAPI:
     app = FastAPI(title="Study Companion API", version="1.0.0", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
+        allow_origins=["http://127.0.0.1:5173", "http://localhost:5173", "http://127.0.0.1:5174", "http://localhost:5174"],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -86,10 +89,22 @@ def create_app(dependencies: Any, *, lifespan: Any = None) -> FastAPI:
     #注册业务模块路由
     app.include_router(build_auth_router(dependencies.auth))
     app.include_router(build_profile_router(dependencies.profile))
+    app.include_router(
+        build_learner_goals_router(
+            dependencies.learner_goals,
+            dependencies.learning_plan,
+        )
+    )
     app.include_router(build_learner_goal_router(dependencies.learner_goals))
     app.include_router(build_diagnosis_router(dependencies.diagnosis))
     app.include_router(build_learning_plan_router(dependencies.learning_plan))
-    app.include_router(build_material_qa_router(dependencies.material_qa))
+    app.include_router(
+        build_material_qa_router(
+            dependencies.material_qa,
+            dependencies.material_qa_attachments,
+        )
+    )
     app.include_router(build_learning_record_router(dependencies.learning_record))
     app.include_router(build_today_learning_router(dependencies.today_learning))
+    app.include_router(build_practice_router(PracticeRepository(dependencies.database_engine)))
     return app

@@ -114,7 +114,8 @@ export type QaContextResult = {
  * 【后端接入清单】POST /rag/conversations/{id}/messages 需接收该字段，
  * 并在降级作答时返回 answeredByGeneralModel=true、citations=[]。
  */
-export type QaQuestionPayload = { bookId: BookId; question: string; conversationId?: string; sources?: Source[]; allowGeneralFallback?: boolean; answerMode?: QaAnswerMode; learningTaskId?: string | null };
+export type QaQuestionPayload = { bookId: BookId; question: string; conversationId?: string; sources?: Source[]; allowGeneralFallback?: boolean; answerMode?: QaAnswerMode; learningTaskId?: string | null; attachment?: File };
+export type QaAttachment = { id: number; messageId: number; fileName: string; fileType: string; fileSize: number; fileUrl: string; createdAt: string; updatedAt: string };
 export type QaResult = {
   answer: string;
   refused: boolean;
@@ -129,6 +130,7 @@ export type QaResult = {
   socraticState?: string | null;
   responseQuality?: string | null;
   socraticCompleted?: boolean;
+  userMessageId?: number | null;
 };
 export type MaterialLearningPlanPayload = { bookId: BookId; title: string; goal: string; description: string; minutes: number; expectedCompletionDate: string; resources: Source[] };
 export type LearningActivity = {
@@ -149,6 +151,7 @@ export type LearningActivity = {
   result: Record<string, unknown>;
   detail: Record<string, unknown>;
 };
+export type LearningActivityList = { records: LearningActivity[]; total: number; page: number; pageSize: number; hasNext: boolean };
 export type LearningRecordSummary = {
   today: { activityCount: number; completedTasks: number; studyMinutes: number; diagnosticAccuracy: number | null };
   calendar: Array<{ date: string; activityCount: number; completedTasks: number; studyMinutes: number }>;
@@ -201,7 +204,9 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
         : 15000;
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
+    const isFormData = typeof FormData !== "undefined" && init?.body instanceof FormData;
     const response = await fetch(`${API_BASE_URL}${path}`, {
+      headers: { ...(isFormData ? {} : { "Content-Type": "application/json" }), ...getAuthHeaders(), ...init?.headers },
       headers: { "Content-Type": "application/json", ...getAuthHeaders(), ...init?.headers },
       signal: controller.signal,
       ...init,
@@ -375,6 +380,7 @@ export const mockApi = {
       })(),
     };
   },
+  async writeLearningEvent(payload: { taskId: string; eventType: string; status: string; durationSeconds?: number; plannedMinutes?: number }) {
   async writeLearningEvent(payload: { taskId: string; eventType: string; status: string; bookId?: BookId; durationSeconds?: number; plannedMinutes?: number }) {
     await wait(260);
     return { eventId: `event-${Date.now()}`, ...payload, saved: true };
@@ -414,6 +420,9 @@ export const mockApi = {
       };
     }
     return { answer: "这是一个很好的追问。建议先从定义、输入条件和输出结果三个角度拆解，再结合引用资料核对关键概念。", refused: false, citations: payload.sources, answerMode: "direct" };
+  },
+  async listQaAttachments(_messageId: number): Promise<QaAttachment[]> {
+    return [];
   },
   async getLearnerProfile(userId: string, learningDomain: string): Promise<LearnerProfileResult> {
     await wait(260);
@@ -606,6 +615,16 @@ export const realApi = {
   submitDiagnosticAnswer: (diagnosticId: string, payload: { questionId: string; answer: string; skipped?: boolean }) => request(`/diagnostics/${diagnosticId}/answers`, { method: "POST", body: JSON.stringify(payload) }),
   finishDiagnostic: (diagnosticId: string) => request<DiagnosticResult>(`/diagnostics/${diagnosticId}/finish`, { method: "POST" }),
   submitCalibration: (payload: { diagnosticId: string; level: string; reason: string }) => request("/learner-calibrations", { method: "POST", body: JSON.stringify(payload) }),
+  generatePlan: (payload: { diagnosticId: string; bookId: BookId; goal: string }) => request<LearningPlanResult>("/learning-plans/generate", { method: "POST", body: JSON.stringify({ ...payload, userId: getCurrentUserId() }) }),
+  createMaterialPlan: (payload: MaterialLearningPlanPayload) => request<LearningPlanResult>("/learning-plans/material", { method: "POST", body: JSON.stringify({ ...payload, userId: getCurrentUserId() }) }),
+  getLearningPlan: (bookId: BookId, diagnosticId?: string) => {
+    const query = new URLSearchParams({ bookId, userId: getCurrentUserId() });
+    if (diagnosticId) query.set("diagnosticId", diagnosticId);
+    return request<LearningPlanLookup>(`/learning-plans?${query.toString()}`);
+  },
+  getTodayLearning: (bookId: BookId) => request<TodayLearningResponse>(`/today-learning?userId=${encodeURIComponent(getCurrentUserId())}&bookId=${encodeURIComponent(bookId)}`),
+  writeLearningEvent: (payload: { taskId: string; taskTitle: string; eventType: string; status: string; durationSeconds?: number; plannedMinutes?: number }) => request("/learning-events", { method: "POST", body: JSON.stringify({ ...payload, userId: getCurrentUserId() }) }),
+  getLearningRecords: (params?: { category?: string; page?: number; pageSize?: number }) => {
   generateWeeklyPlan: async (bookId: BookId, reason = "", aimLevel?: number): Promise<LearningPlanResult> => {
     const response = await request<WeeklyPlanPayload>("/learning-plans/weekly/generate", { method: "POST", body: JSON.stringify({ userId: Number(getCurrentUserId()), bookId: databaseBookId[bookId], reason, ...(aimLevel === undefined ? {} : { aimLevel }) }) });
     return asLearningPlan(response, bookId);
@@ -629,6 +648,25 @@ export const realApi = {
     if (params?.endDate) query.set("endDate", params.endDate);
     return request<LearningActivityList>(`/learning-records?${query.toString()}`);
   },
+  // 有图片时使用 multipart 接口；纯文字问题继续沿用 JSON 接口。
+  askQuestion: (payload: QaQuestionPayload) => {
+    const conversationId = encodeURIComponent(payload.conversationId ?? "");
+    if (payload.attachment) {
+      const form = new FormData();
+      form.set("userId", getCurrentUserId());
+      form.set("bookId", payload.bookId);
+      form.set("question", payload.question);
+      form.set("allowGeneralFallback", String(payload.allowGeneralFallback ?? false));
+      form.set("answerMode", payload.answerMode ?? "direct");
+      if (payload.learningTaskId) form.set("learningTaskId", payload.learningTaskId);
+      form.set("file", payload.attachment);
+      return request<QaResult>(`/rag/conversations/${conversationId}/messages-with-attachment`, { method: "POST", body: form });
+    }
+    return request<QaResult>(`/rag/conversations/${conversationId}/messages`, { method: "POST", body: JSON.stringify({ bookId: payload.bookId, question: payload.question, userId: getCurrentUserId(), allowGeneralFallback: payload.allowGeneralFallback ?? false, answerMode: payload.answerMode ?? "direct", learningTaskId: payload.learningTaskId ?? null }) });
+  },
+  // 回读数据库中该用户消息绑定的附件，供消息气泡使用OSS公共URL展示。
+  listQaAttachments: (messageId: number) => request<QaAttachment[]>(`/rag/messages/${messageId}/attachments?userId=${encodeURIComponent(getCurrentUserId())}`),
+  getLearnerProfile: (userId: string, learningDomain: string) => request<LearnerProfileResult>(`/learner-profile?user_id=${encodeURIComponent(userId)}&learning_domain=${encodeURIComponent(learningDomain)}`),
   askQuestion: (payload: QaQuestionPayload) => request<QaResult>(`/rag/conversations/${encodeURIComponent(payload.conversationId ?? "")}/messages`, { method: "POST", body: JSON.stringify({ bookId: payload.bookId, question: payload.question, userId: getCurrentUserId(), allowGeneralFallback: payload.allowGeneralFallback ?? false, answerMode: payload.answerMode ?? "direct", learningTaskId: payload.learningTaskId ?? null }) }),
   getLearnerProfile: async (userId: string, learningDomain: string): Promise<LearnerProfileResult> => {
     const book = profileBookFor(learningDomain);
@@ -670,5 +708,23 @@ export const realApi = {
 };
 
 export const api = USE_REAL_API ? realApi : mockApi;
+
+export type PracticeQuestion = { id: number; content: string; type: string; options: Array<{ key?: string; id?: string; text?: string; label?: string }> };
+export type PracticeStats = { answerCount: number; correctCount: number; accuracy: number; studySeconds?: number };
+export type PracticeAnswerResult = { correct: boolean; correctAnswer: string; explanation: string; statistics: PracticeStats };
+export type PracticeLeader = { rank: number; userId: number; name: string; answers: number; correct: number; accuracy: number; studySeconds: number; taskCount: number; streakBonus: number; score: number };
+export type PracticeAchievement = { id: number; code: string; title: string; detail: string; icon: string; tone: string; current: number; target: number; progress: number; earned: boolean; earnedAt: string | null; statusText: string };
+export type PracticeAchievements = { earnedCount: number; totalCount: number; items: PracticeAchievement[]; newlyUnlocked: PracticeAchievement[] };
+export const practiceApi = {
+  start: (bookId: string) => request<{ sessionId: number; question: PracticeQuestion | null }>("/practice/sessions", { method: "POST", body: JSON.stringify({ userId: Number(getCurrentUserId()), bookId }) }),
+  next: (sessionId: number) => request<{ question: PracticeQuestion | null }>(`/practice/sessions/${sessionId}/next?userId=${encodeURIComponent(getCurrentUserId())}`),
+  answer: (sessionId: number, questionId: number, answer: string) => request<PracticeAnswerResult>(`/practice/sessions/${sessionId}/answers`, { method: "POST", body: JSON.stringify({ userId: Number(getCurrentUserId()), questionId, answer }) }),
+  finish: (sessionId: number) => request<PracticeStats>(`/practice/sessions/${sessionId}/finish?userId=${encodeURIComponent(getCurrentUserId())}`, { method: "POST" }),
+  leaderboard: (period: "week" | "month") => request<{ items: PracticeLeader[] }>(`/practice/leaderboard?period=${period}`),
+  overview: (period: "week" | "month" = "week") => request<PracticeStats>(`/practice/overview?userId=${encodeURIComponent(getCurrentUserId())}&period=${period}`),
+  achievements: () => request<PracticeAchievements>(`/practice/achievements?userId=${encodeURIComponent(getCurrentUserId())}`),
+  achievementProgress: (force = false) => request<PracticeAchievements>(`/practice/achievements/progress?userId=${encodeURIComponent(getCurrentUserId())}&force=${force}`),
+  acknowledgeAchievement: (achievementId: number) => request<{ acknowledged: boolean; achievementId: number }>(`/practice/achievements/${achievementId}/acknowledge`, { method: "POST", body: JSON.stringify({ userId: Number(getCurrentUserId()) }) }),
+};
 
 export type ApiTaskPayload = LearningTask;

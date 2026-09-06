@@ -106,7 +106,18 @@ class MaterialQaAgent:
     def generate(self, agent_input: MaterialQaAgentInput) -> MaterialQaAgentOutput:
         """调用 LLM 生成回答，引用和知识点由检索结果提供。"""
 
-        raw_response = self.llm_client.generate(self._build_prompt(agent_input))
+        prompt = self._build_prompt(agent_input)
+        image_urls = [
+            attachment.file_url
+            for attachment in agent_input.attachments
+            if attachment.file_type.startswith("image/")
+        ]
+        # 有图片时将文字提示和图片URL放入同一次多模态模型请求。
+        raw_response = (
+            self.llm_client.generate_multimodal(prompt, image_urls=image_urls)
+            if image_urls
+            else self.llm_client.generate(prompt)
+        )
         answer, refused = self._parse_response(raw_response)
 
         # 教材内答不出、且用户显式允许降级时，再发一次「通用知识」提示词。
@@ -221,6 +232,9 @@ class MaterialQaAgent:
                 f"[资料{index}] {source.title}（{source.location}）\n{chunk.text}"
             )
         context = "\n\n".join(materials) or "（未检索到相关资料）"
+        attachment_summary = "、".join(
+            attachment.file_name for attachment in agent_input.attachments
+        ) or "（无附件）"
 
         teaching_strategy = ""
         if agent_input.answer_mode == "socratic":
@@ -241,11 +255,11 @@ class MaterialQaAgent:
 
         return f"""你是 Study Companion 的资料问答助手。请严格遵守以下规则：
 1. 先结合历史对话理解当前问题中的“这个”“它”“上述内容”等指代和省略信息。
-2. 历史对话只用于确定当前问题所指的对象；事实性回答仍须优先依据给出的检索资料，不要编造资料中没有的事实。
+2. 历史对话只用于确定当前问题所指的对象；事实性回答须依据给出的检索资料或当前上传图片，不要编造二者都没有的事实。
 3. 使用清晰、准确、适合学习者理解的中文；必要时分点说明。
 4. 如果资料不足以回答，应明确说明资料不足，并指出还需要什么信息。
 5. 当问题与资料无关，或资料不足以可靠回答时，将 refused 设为 true，并在 answer 中简要说明拒答原因。
-6. 只有回答能够由检索资料直接支持时，才将 refused 设为 false。
+6. 回答能够由检索资料或当前上传图片直接支持时，才将 refused 设为 false。
 7. 只输出一次、一个合法 JSON 对象，生成对象后立即停止；不要重复输出，不要使用 Markdown 代码块，不要输出思考过程或其他文字。格式必须是：
 {{"refused": false, "answer": "基于资料的最终回答"}}
 {teaching_strategy}
@@ -255,6 +269,9 @@ class MaterialQaAgent:
 
 检索资料：
 {context}
+
+当前上传图片：
+{attachment_summary}
 
 当前问题：
 {agent_input.current_question}

@@ -25,6 +25,7 @@ from .models import (
     MaterialQaAgentInput,
     MaterialQaAgentOutput,
     MaterialQaAnswer,
+    MaterialQaAttachment,
     MaterialQaConversation,
     MaterialQaMessage,
     MaterialQaRetrievedChunk,
@@ -102,6 +103,27 @@ class MaterialQaService:
             limit=self.HISTORY_LIMIT,
         )
 
+    # 在生成回答前单独保存用户问题，供附件通过message_id建立归属关系。
+    def save_question(
+        self,
+        *,
+        user_id: str,
+        book_id: str,
+        question: str,
+        answer_mode: AnswerMode,
+        learning_task_id: str | None,
+        response_quality: ResponseQuality | None,
+    ) -> int:
+        return self.message_store.add_message(
+            user_id=user_id,
+            book_id=book_id,
+            role="user",
+            content=question,
+            answer_mode=answer_mode,
+            learning_task_id=learning_task_id,
+            response_quality=response_quality,
+        )
+
     #Agent生成结果后，更新会话
     def complete_question(
         self,
@@ -111,19 +133,33 @@ class MaterialQaService:
         book_id: str,
         question: str,
         output: MaterialQaAgentOutput,
+        user_message_id: int | None = None,
     ) -> MaterialQaAnswer:
-        self.message_store.save_exchange(
-            user_id=user_id,
-            book_id=book_id,
-            question=question,
-            answer=output.answer,
-            citations=output.citations,
-            answer_mode=output.answer_mode,
-            learning_task_id=output.learning_task_id,
-            socratic_state=output.socratic_state,
-            response_quality=output.response_quality,
-            socratic_completed=output.socratic_completed,
-        )
+        if user_message_id is None:
+            self.message_store.save_exchange(
+                user_id=user_id,
+                book_id=book_id,
+                question=question,
+                answer=output.answer,
+                citations=output.citations,
+                answer_mode=output.answer_mode,
+                learning_task_id=output.learning_task_id,
+                socratic_state=output.socratic_state,
+                response_quality=output.response_quality,
+                socratic_completed=output.socratic_completed,
+            )
+        else:
+            self.message_store.add_message(
+                user_id=user_id,
+                book_id=book_id,
+                role="assistant",
+                content=output.answer,
+                citations=output.citations,
+                answer_mode=output.answer_mode,
+                learning_task_id=output.learning_task_id,
+                socratic_state=output.socratic_state,
+                socratic_completed=output.socratic_completed,
+            )
         return MaterialQaAnswer(
             conversation_id=conversation_id,
             answer=output.answer,
@@ -137,6 +173,7 @@ class MaterialQaService:
             socratic_state=output.socratic_state,
             response_quality=output.response_quality,
             socratic_completed=output.socratic_completed,
+            user_message_id=user_message_id,
         )
 
     @staticmethod
@@ -151,6 +188,7 @@ class MaterialQaService:
         socratic_state: SocraticStateName | None = None,
         socratic_directive: str = "",
         root_question: str = "",
+        attachments: list[MaterialQaAttachment] | None = None,
     ) -> MaterialQaAgentInput:
         return MaterialQaAgentInput(
             history=history,
@@ -162,6 +200,7 @@ class MaterialQaService:
             socratic_state=socratic_state,
             socratic_directive=socratic_directive,
             root_question=root_question,
+            attachments=attachments or [],
         )
 
     def finish_learning_task(self, *, user_id: str, book_id: str, learning_task_id: str) -> None:

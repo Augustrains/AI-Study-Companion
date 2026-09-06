@@ -5,8 +5,17 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import uuid4
 
+from modules.common.errors import ConfigurationError, ValidationAppError
+
 from .agent import MaterialQaAgent, MaterialQaQueryRewriter
-from .models import AnswerMode, MaterialQaAnswer, MaterialQaConversation, ResponseQuality
+from .attachment_service import MaterialQaAttachmentService
+from .models import (
+    AnswerMode,
+    MaterialQaAnswer,
+    MaterialQaConversation,
+    MaterialQaPendingAttachment,
+    ResponseQuality,
+)
 from .repository import MaterialQaMessageStore
 from .services import (
     MaterialQaActivityRecorder,
@@ -29,10 +38,12 @@ class MaterialQaWorkflow:
         message_store: MaterialQaMessageStore | None = None,
         query_rewriter: MaterialQaQueryRewriter | None = None,
         response_classifier: MaterialQaResponseClassifier | None = None,
+        attachment_service: MaterialQaAttachmentService | None = None,
     ) -> None:
         self.agent = agent or MaterialQaAgent()
         self.query_rewriter = query_rewriter or MaterialQaQueryRewriter(self.agent.llm_client)
         self.response_classifier = response_classifier or MaterialQaResponseClassifier(self.agent.llm_client)
+        self.attachment_service = attachment_service
         self.retriever = retriever or QdrantMaterialRetriever(
             documents={},
             qdrant_path=Path("data/qdrant"),
@@ -112,6 +123,7 @@ class MaterialQaWorkflow:
         allow_general_fallback: bool = False,   # - 资料没找到答案时，是否允许模型使用通用知识回答。
         answer_mode: AnswerMode = "direct",
         learning_task_id: str | None = None,
+        attachments: list[MaterialQaPendingAttachment] | None = None,
     ) -> MaterialQaAnswer:
         # 读取历史对话
         history = self.qa_service.begin_question(
@@ -181,6 +193,34 @@ class MaterialQaWorkflow:
                 else engine.directive
             )
         # 生成回答
+        # 带附件提问时先保存用户消息，附件才能通过message_id建立外键关联。
+        user_message_id = None
+        persisted_attachments = []
+        if attachments:
+            if self.attachment_service is None:
+                raise ConfigurationError("material QA attachment service is not configured")
+            if any(not item.file_type.startswith("image/") for item in attachments):
+                raise ValidationAppError(
+                    "the configured multimodal chat endpoint currently supports image attachments only"
+                )
+            user_message_id = self.qa_service.save_question(
+                user_id=user_id,
+                book_id=book_id,
+                question=question,
+                answer_mode=answer_mode,
+                learning_task_id=learning_task_id,
+                response_quality=response_quality,
+            )
+            for attachment in attachments:
+                persisted_attachments.append(
+                    self.attachment_service.upload(
+                        user_id=user_id,
+                        message_id=user_message_id,
+                        file_name=attachment.file_name,
+                        file_type=attachment.file_type,
+                        content=attachment.content,
+                    )
+                )
         output = self.agent.generate(
             self.qa_service.agent_input(
                 history=history,
@@ -192,6 +232,7 @@ class MaterialQaWorkflow:
                 socratic_state=socratic_state,
                 socratic_directive=socratic_directive,
                 root_question=root_question,
+                attachments=persisted_attachments,
             )
         )
         if answer_mode == "socratic":
@@ -215,4 +256,5 @@ class MaterialQaWorkflow:
             book_id=book_id,
             question=question,
             output=output,
+            user_message_id=user_message_id,
         )

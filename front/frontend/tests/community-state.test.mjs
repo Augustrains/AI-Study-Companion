@@ -86,3 +86,4 @@ test("history limits keep local demo storage bounded", () => {
   assert.equal(state.comments.length, 500);
   assert.deepEqual(parseCommunityState(JSON.stringify(state)), state);
 });
+

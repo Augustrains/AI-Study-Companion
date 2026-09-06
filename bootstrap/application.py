@@ -17,6 +17,12 @@ from modules.diagnosis.workflow import DiagnosisWorkflow
 from modules.learner_profile.agent import CurrentMasteryAssessmentAgent, GoalKnowledgeRequirementAgent
 from modules.learner_profile.module import MySqlLearnerProfileModule
 from modules.learner_profile.repository import MySqlLearnerProfileRepository
+from modules.common.database import check_mysql_connection, create_mysql_engine
+from modules.auth.module import AuthModule
+from modules.auth.repository import MysqlAccountStore
+from modules.diagnosis.agent import DiagnosticAgent
+from modules.diagnosis.services import AssessmentService, DiagnosisResultStore, GeneratedQuestionBank
+from modules.diagnosis.workflow import DiagnosisWorkflow
 from modules.learner_goals.module import LearnerGoalModule
 from modules.learner_goals.repository import MysqlLearnerGoalRepository
 from modules.learning_plan.module import LearningPlanModule
@@ -30,6 +36,10 @@ from modules.material_qa.agent import MaterialQaAgent
 from modules.material_qa.repository import MysqlMaterialQaMessageStore
 from modules.material_qa.services import MarkdownMaterialRetriever, QdrantMaterialRetriever, ResilientMaterialRetriever
 from modules.material_qa.workflow import MaterialQaWorkflow
+from modules.material_qa.attachment_repository import MysqlMaterialQaAttachmentRepository
+from modules.material_qa.attachment_service import MaterialQaAttachmentService
+from modules.material_qa.attachment_storage import OssAttachmentStorage
+from modules.today_learning.module import TodayLearningModule
 from sdk.llm_client import DeepSeekLLMClient
 
 
@@ -40,12 +50,19 @@ class ApiDependencies:
     diagnosis: DiagnosisWorkflow
     learning_plan: LearningPlanModule
     material_qa: MaterialQaWorkflow
+    material_qa_attachments: MaterialQaAttachmentService
     learning_record: LearningRecordModule
     learner_goals: LearnerGoalModule
     today_learning: TodayLearningModule
     database_engine: Engine
 
     def start(self) -> None:
+        """Warm the database pool so the first learner request avoids a slow remote handshake."""
+        try:
+            check_mysql_connection(self.database_engine)
+        except Exception:
+            # 连接恢复由 SQLAlchemy 的 pool_pre_ping 处理；不要因预热失败阻止 API 启动。
+            pass
         """Preheat retrieval; use local Markdown if Qdrant cannot start."""
         self.material_qa.start()
 
@@ -58,6 +75,7 @@ def build_api_dependencies(settings: common_api.config.Settings | None = None) -
     """Create the one consistent MySQL-backed dependency graph used by the API."""
     settings = settings or common_api.config.Settings.from_env()
     database_engine = create_mysql_engine(settings)
+    knowledge_point_catalog = common_api.knowledge_points.JsonKnowledgePointCatalog(settings.knowledge_points_dir)
     knowledge_point_catalog = common_api.knowledge_points.JsonKnowledgePointCatalog(
         settings.knowledge_points_dir
     )
@@ -109,6 +127,14 @@ def build_api_dependencies(settings: common_api.config.Settings | None = None) -
         ),
         fallback=MarkdownMaterialRetriever(documents=material_documents),
     )
+    learner_goal_module = LearnerGoalModule(
+        repository=MysqlLearnerGoalRepository(database_engine)
+    )
+    today_learning_module = TodayLearningModule(learning_plan_module, learning_record_module, diagnosis_workflow)
+    material_qa_attachment_service = MaterialQaAttachmentService(
+        storage=OssAttachmentStorage.from_settings(settings),
+        repository=MysqlMaterialQaAttachmentRepository(database_engine),
+    )
 
     return ApiDependencies(
         auth=auth_module,
@@ -120,7 +146,9 @@ def build_api_dependencies(settings: common_api.config.Settings | None = None) -
             activity_recorder=learning_record_module,
             retriever=material_qa_retriever,
             message_store=MysqlMaterialQaMessageStore(database_engine),
+            attachment_service=material_qa_attachment_service,
         ),
+        material_qa_attachments=material_qa_attachment_service,
         learning_record=learning_record_module,
         learner_goals=learner_goal_module,
         today_learning=TodayLearningModule(learning_plan_module, learning_record_module),

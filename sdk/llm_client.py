@@ -23,6 +23,10 @@ class LLMClient(Protocol):
     def generate(self, prompt: str) -> str:
         ...
 
+    # 在一次请求中同时提交文字提示和公开可访问的图片URL。
+    def generate_multimodal(self, prompt: str, *, image_urls: list[str]) -> str:
+        ...
+
 
 @dataclass(frozen=True)
 class DeepSeekLLMClient:
@@ -69,6 +73,20 @@ class DeepSeekLLMClient:
     def generate(self, prompt: str) -> str:
         """通过 OpenAI-compatible Chat Completions 接口生成回答。"""
 
+        return self._generate_from_content(prompt)
+
+    # 将文字和图片URL组成同一条user消息，只调用一次多模态模型。
+    def generate_multimodal(self, prompt: str, *, image_urls: list[str]) -> str:
+        content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+        content.extend(
+            {"type": "image_url", "image_url": {"url": image_url}}
+            for image_url in image_urls
+        )
+        return self._generate_from_content(content)
+
+    # 统一发送纯文本或多模态Chat Completions请求并解析返回文本。
+    def _generate_from_content(self, content: str | list[dict[str, Any]]) -> str:
+
         if not self.api_key:
             raise ConfigurationError(
                 "LLM API key is not configured",
@@ -77,7 +95,7 @@ class DeepSeekLLMClient:
 
         payload = {
             "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": [{"role": "user", "content": content}],
             "stream": False,
         }
         try:
@@ -137,4 +155,9 @@ class NullLLMClient:
 
     def generate(self, prompt: str) -> str:
         del prompt
+        return ""
+
+    # 空客户端不访问图片，只保持与真实多模态客户端一致的接口。
+    def generate_multimodal(self, prompt: str, *, image_urls: list[str]) -> str:
+        del prompt, image_urls
         return ""

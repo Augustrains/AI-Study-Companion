@@ -75,3 +75,4 @@ node --test tests/community-state.test.mjs
 ![动态交流与学习伙伴](screenshots/community-feed.png)
 
 ![发布动态](screenshots/community-publish.png)
+

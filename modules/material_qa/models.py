@@ -25,6 +25,29 @@ class MaterialQaMessage:
     response_quality: ResponseQuality | None = None
     socratic_completed: bool = False
 
+# 对应附件表的一条数据
+@dataclass(frozen=True)
+class MaterialQaAttachment:
+    """Metadata for a material-QA file whose bytes are stored in object storage."""
+
+    id: int
+    message_id: int
+    file_name: str
+    file_type: str
+    file_size: int
+    file_url: str
+    created_at: str = ""
+    updated_at: str = ""
+
+
+@dataclass(frozen=True)
+class MaterialQaPendingAttachment:
+    """A validated-by-HTTP but not-yet-persisted attachment upload."""
+
+    file_name: str
+    file_type: str
+    content: bytes
+
 
 @dataclass(frozen=True)
 class MaterialQaLearningTask:
@@ -90,6 +113,7 @@ class MaterialQaAgentInput:
     socratic_state: SocraticStateName | None = None
     socratic_directive: str = ""
     root_question: str = ""
+    attachments: list[MaterialQaAttachment] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -126,3 +150,4 @@ class MaterialQaAnswer:
     socratic_state: SocraticStateName | None = None
     response_quality: ResponseQuality | None = None
     socratic_completed: bool = False
+    user_message_id: int | None = None
