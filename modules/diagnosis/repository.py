@@ -10,6 +10,31 @@ from modules.learning_plan.repository import MySqlLearningPlanRepository
 
 
 class MySqlDiagnosisRepository(MySqlLearningPlanRepository):
+    def load_planning_history(self, *, user_id: int, book_id: int) -> dict[str, Any]:
+        """Load persisted context required to start the next diagnosis."""
+
+        with self.connection() as connection:
+            cursor = connection.cursor(dictionary=True)
+            cursor.execute(
+                "SELECT COUNT(*) AS completed_rounds FROM diagnostic_session "
+                "WHERE user_id = %s AND book_id = %s AND total_questions > 0",
+                (user_id, book_id),
+            )
+            row = cursor.fetchone() or {}
+            cursor.execute(
+                "SELECT DISTINCT q.learning_item_id "
+                "FROM diagnostic_answer answer_row "
+                "JOIN diagnostic_session session_row ON session_row.id = answer_row.session_id "
+                "JOIN questions q ON q.id = answer_row.question_id "
+                "WHERE session_row.user_id = %s AND session_row.book_id = %s "
+                "ORDER BY q.learning_item_id",
+                (user_id, book_id),
+            )
+            return {
+                "diagnosis_round": int(row.get("completed_rounds") or 0) + 1,
+                "answered_question_ids": [str(item["learning_item_id"]) for item in cursor.fetchall()],
+            }
+
     def load_knowledge_point_states(self, *, user_id: int, book_id: int) -> dict[str, dict[str, Any]]:
         """Return the MySQL learner model used for diagnostic planning and updates."""
 
@@ -88,7 +113,7 @@ class MySqlDiagnosisRepository(MySqlLearningPlanRepository):
             "SELECT previous.id, previous.title FROM learning_plan_day_item previous "
             "JOIN learning_plan_day previous_day ON previous_day.id = previous.learning_plan_day_id "
             "JOIN learning_plan_day target_day ON target_day.id = %s "
-            "WHERE previous_day.plan_id = target_day.plan_id AND previous.status <> 'completed' "
+            "WHERE previous_day.plan_id = target_day.plan_id AND previous.status NOT IN ('completed', 'skipped', 'rescheduled') "
             "AND (previous_day.expected_date < target_day.expected_date "
             "OR (previous_day.expected_date = target_day.expected_date AND previous.id < %s)) "
             "ORDER BY previous_day.expected_date, previous.id LIMIT 1",

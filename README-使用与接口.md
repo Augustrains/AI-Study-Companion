@@ -248,10 +248,15 @@ AI 的原始估计，不会被校准值改写**——改写会让下一轮比值
 | POST | `/rag/conversations` | `{bookId, userId}` → 新会话 |
 | POST | `/rag/conversations/{id}/messages` | `{bookId, question, userId, allowGeneralFallback}` |
 | POST | `/rag/ask` | 同上，没有会话时自动建一个 |
+| POST | `/rag/indexes/rebuild` | `{bookIds: ["ml", "dl"], confirm: true}` → 校验、构建并激活新教材索引 |
+| POST | `/rag/materials/{content_unit_id}/review` | `{bookId: "dl", status: "approved", reviewer: "..."}` → 审核教材单元 |
 
 教材里找不到依据时返回 `refused: true`。用户显式点「用通用模型回答」后才带
 `allowGeneralFallback: true`，此时后端换一套提示词重答，返回
 `answeredByGeneralModel: true` 且 `citations: []`——没出处就不给引用，也不影响掌握度。
+
+教材入库的审核字段、切分策略和重建接口说明见 `docs/MATERIAL_RAG_INGESTION.md`。重建会写入
+版本化的 `study_companion_v5_*` collection，不删除旧索引。
 
 ### 学习资源 `modules/learning_resources/`
 

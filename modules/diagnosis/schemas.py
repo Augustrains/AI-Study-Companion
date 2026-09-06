@@ -15,6 +15,7 @@ class DiagnosticStartRequest(BaseModel):
     user_id: str = Field(default="user_001", alias="userId", min_length=1)
     learning_plan_day_id: int | None = Field(default=None, alias="learningPlanDayId", gt=0)
     learning_plan_item_id: int | None = Field(default=None, alias="learningPlanItemId", gt=0)
+    task_mode: str = Field(default="diagnostic", alias="taskMode")
 
 
 class DiagnosticAnswerRequest(BaseModel):

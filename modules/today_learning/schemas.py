@@ -73,6 +73,7 @@ class TodayTaskResponse(BaseModel):
     reason: str = ""
     description: str = ""
     knowledge_point_ids: list[str] = Field(default_factory=list, alias="knowledgePointIds")
+    plan_day_id: str | None = Field(default=None, alias="planDayId")
 
     model_config = ConfigDict(populate_by_name=True)
 

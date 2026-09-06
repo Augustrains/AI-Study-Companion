@@ -123,9 +123,11 @@ const levelLabel = (value: string) => SELF_LEVELS.find((item) => item.value === 
 export function LearnerProfileView({
   bookId,
   onNotice,
+  onProfileSaved,
 }: {
   bookId: BookId;
   onNotice?: (title: string, message: string) => void;
+  onProfileSaved?: (bookId: BookId) => Promise<void>;
 }) {
   // 用当前登录用户，不再从 URL 参数取、也不再写死 user_001——
   // 画像和诊断、今日学习必须落在同一个账号下，否则闭环是断的。
@@ -237,6 +239,7 @@ export function LearnerProfileView({
       setForm(result.profile ?? payload);
       setEditing(false);
       setMessage(`${domain.label}学习画像已保存。`);
+      await onProfileSaved?.(bookId);
     } catch (saveError) {
       setError(describeSaveError(saveError));
     } finally {

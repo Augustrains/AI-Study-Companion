@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from sqlalchemy.engine import Engine
 
 from modules.common import api as common_api
+from modules.auth.module import AuthModule
+from modules.auth.repository import MysqlAccountStore
 from modules.common.database import create_mysql_engine
 from modules.diagnosis.agent import DiagnosticAgent
 from modules.diagnosis.repository import MySqlDiagnosisRepository
@@ -15,10 +17,14 @@ from modules.diagnosis.workflow import DiagnosisWorkflow
 from modules.learner_profile.agent import CurrentMasteryAssessmentAgent, GoalKnowledgeRequirementAgent
 from modules.learner_profile.module import MySqlLearnerProfileModule
 from modules.learner_profile.repository import MySqlLearnerProfileRepository
+from modules.learner_goals.module import LearnerGoalModule
+from modules.learner_goals.repository import MysqlLearnerGoalRepository
 from modules.learning_plan.module import LearningPlanModule
+from modules.learning_plan.agent import WeeklyLearningPlanAgent
 from modules.learning_plan.pace import LearningPaceAgent
 from modules.learning_plan.repository import MySqlLearningPlanRepository
 from modules.learning_record.module import LearningRecordModule
+from modules.today_learning.module import TodayLearningModule
 from modules.material_qa.agent import MaterialQaAgent
 from modules.material_qa.repository import MysqlMaterialQaMessageStore
 from modules.material_qa.services import MarkdownMaterialRetriever, QdrantMaterialRetriever, ResilientMaterialRetriever
@@ -28,11 +34,14 @@ from sdk.llm_client import DeepSeekLLMClient
 
 @dataclass(frozen=True)
 class ApiDependencies:
+    auth: AuthModule
     profile: MySqlLearnerProfileModule
     diagnosis: DiagnosisWorkflow
     learning_plan: LearningPlanModule
     material_qa: MaterialQaWorkflow
     learning_record: LearningRecordModule
+    learner_goals: LearnerGoalModule
+    today_learning: TodayLearningModule
     database_engine: Engine
 
     def start(self) -> None:
@@ -53,18 +62,31 @@ def build_api_dependencies(settings: common_api.config.Settings | None = None) -
     )
     llm_client = DeepSeekLLMClient.from_env()
     learning_record_module = LearningRecordModule()
+    # 用户身份必须与其余学习数据共用 MySQL 的 users.user_id。此前认证
+    # 模块没有挂载到 API，前端才会回退到 local_xxx 身份，导致画像和计划
+    # 无法按用户关联。
+    auth_module = AuthModule(
+        store=MysqlAccountStore(database_engine),
+        seed_demo_account=False,
+    )
+    learner_goal_module = LearnerGoalModule(
+        repository=MysqlLearnerGoalRepository(database_engine)
+    )
 
     profile_workflow = MySqlLearnerProfileModule(
         MySqlLearnerProfileRepository.from_env(),
         GoalKnowledgeRequirementAgent(llm_client),
         CurrentMasteryAssessmentAgent(llm_client),
     )
+    question_bank = GeneratedQuestionBank(settings.question_new_dir)
     learning_plan_module = LearningPlanModule(
         MySqlLearningPlanRepository.from_env(),
+        agent=WeeklyLearningPlanAgent(llm_client),
         pace_agent=LearningPaceAgent(learning_record_module),
+        question_bank=question_bank,
     )
     diagnosis_workflow = DiagnosisWorkflow(
-        question_bank=GeneratedQuestionBank(settings.question_new_dir),
+        question_bank=question_bank,
         result_store=DiagnosisResultStore(),
         assessment_service=AssessmentService(),
         diagnostic_agent=DiagnosticAgent(llm_client),
@@ -88,6 +110,7 @@ def build_api_dependencies(settings: common_api.config.Settings | None = None) -
     )
 
     return ApiDependencies(
+        auth=auth_module,
         profile=profile_workflow,
         diagnosis=diagnosis_workflow,
         learning_plan=learning_plan_module,
@@ -98,6 +121,8 @@ def build_api_dependencies(settings: common_api.config.Settings | None = None) -
             message_store=MysqlMaterialQaMessageStore(database_engine),
         ),
         learning_record=learning_record_module,
+        learner_goals=learner_goal_module,
+        today_learning=TodayLearningModule(learning_plan_module, learning_record_module),
         database_engine=database_engine,
     )
 

@@ -5,7 +5,7 @@ export type BookId = string;
 
 export type Book = { id: BookId; title: string; shortTitle: string; subtitle: string };
 export type KnowledgeNode = { label: string; tone: "good" | "learning" | "weak" | "neutral"; left: string; top: string; description: string };
-export type LearningTask = { id: string; title: string; type: string; minutes: number; status: TaskStatus; reason: string; description: string; learningGoal?: string; expectedCompletionDate?: string; knowledgePointIds?: string[]; abilityId?: string; chapterIds?: string[]; questionIds?: string[] };
+export type LearningTask = { id: string; title: string; type: string; minutes: number; status: TaskStatus; reason: string; description: string; learningGoal?: string; expectedCompletionDate?: string; knowledgePointIds?: string[]; abilityId?: string; chapterIds?: string[]; questionIds?: string[]; planDayId?: string };
 export type DiagnosticQuestion = { id: string; title: string; tag: string; options: Array<{ id: string; text: string }> };
 export type RecordItem = { id: string; title: string; description: string; time: string; tone: string; category: "profile" | "task" | "diagnostic" | "qa"; icon: "check" | "target" | "chat" | "calendar" };
 export type Source = {

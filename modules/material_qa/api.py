@@ -4,12 +4,16 @@ from typing import Any
 
 from fastapi import APIRouter
 
+from modules.common.errors import ValidationAppError
+
 from .schemas import (
     AskMaterialQuestionRequest,
     AskMaterialQuestionResponse,
     CreateMaterialQaConversationRequest,
     CreateMaterialQaConversationResponse,
     FinishMaterialQaLearningTaskRequest,
+    RebuildMaterialIndexRequest,
+    ReviewMaterialDocumentRequest,
 )
 from .models import MaterialQaAnswer, MaterialQaConversation
 from .workflow import MaterialQaWorkflow
@@ -100,5 +104,28 @@ def build_router(workflow: MaterialQaWorkflow) -> APIRouter:
             learning_task_id=learning_task_id,
         )
         return {"completed": True}
+
+    @router.post("/api/rag/indexes/rebuild")
+    def rebuild_material_index(payload: RebuildMaterialIndexRequest) -> dict[str, Any]:
+        """构建审核通过的 Markdown 到 v5 结构化索引。"""
+
+        if not payload.confirm:
+            raise ValidationAppError("set confirm=true to rebuild material indexes")
+        return {"index_schema_version": 5, "indexes": workflow.rebuild_material_index(book_ids=payload.book_ids)}
+
+    @router.post("/api/rag/materials/{content_unit_id}/review")
+    def review_material_document(
+        content_unit_id: str,
+        payload: ReviewMaterialDocumentRequest,
+    ) -> dict[str, Any]:
+        """Apply an auditable review transition; direct status editing is not supported."""
+
+        return workflow.review_material_document(
+            book_id=payload.book_id,
+            content_unit_id=content_unit_id,
+            status=payload.status,
+            reviewer=payload.reviewer,
+            reason=payload.reason,
+        )
 
     return router

@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
+import re
 from typing import Any
 
-from modules.common.errors import ResourceNotFoundError
-from modules.diagnosis.workflow import DiagnosisWorkflow
 from modules.learning_plan.module import LearningPlanModule
 from modules.learning_record.models import LearningActivity
 from modules.learning_record.module import LearningRecordModule
@@ -33,24 +32,35 @@ KNOWLEDGE_POINT_LABELS = {
 
 
 class TodayLearningModule:
-    def __init__(self, learning_plan: LearningPlanModule, learning_record: LearningRecordModule, diagnosis: DiagnosisWorkflow) -> None:
+    """Read-only dashboard assembled from the active persisted weekly plan."""
+
+    def __init__(self, learning_plan: LearningPlanModule, learning_record: LearningRecordModule) -> None:
         self.learning_plan = learning_plan
         self.learning_record = learning_record
-        self.diagnosis = diagnosis
 
     def get_today_learning(self, *, user_id: str, book_id: str) -> dict[str, Any]:
         values = validate_query(user_id, book_id)
-        book = BOOKS.get(values["book_id"], {"id": values["book_id"], "title": values["book_id"], "shortTitle": values["book_id"], "subtitle": ""})
-        plan = self.learning_plan.get_saved(book_id=values["book_id"])
+        book_key = values["book_id"]
+        book = BOOKS.get(book_key, {"id": book_key, "title": book_key, "shortTitle": book_key, "subtitle": ""})
+        # Authentication is still allowed to fall back to a browser-local
+        # account. Such an account has no MySQL numeric user ID yet, so it is
+        # a valid empty dashboard rather than a server error or mock fallback.
+        try:
+            plan = self.learning_plan.get_weekly(
+                user_id=int(values["user_id"]), book_id=self._database_book_id(book_key)
+            )
+        except ValueError:
+            plan = None
         activities = [
             activity
             for activity in self.learning_record.list_activities(values["user_id"], page=1, page_size=100)["records"]
-            if activity.book_id in {values["book_id"], RECORD_BOOK_IDS.get(values["book_id"], values["book_id"])}
+            if activity.book_id in {book_key, RECORD_BOOK_IDS.get(book_key, book_key)}
         ]
-        tasks = self._tasks(plan)
-        goal = str((plan or {}).get("goal") or self._latest_goal(activities) or "")
+        tasks = self._tasks_for_today(plan)
+        all_tasks = self._all_tasks(plan)
+        goal = str((plan or {}).get("plan", {}).get("goal") or self._latest_goal(activities) or "")
         graph = self._knowledge_graph(activities, goal, tasks)
-        progress = self._weekly_progress(activities, tasks)
+        progress = self._weekly_progress(activities, all_tasks)
         recommendation = self._recommendation(tasks, graph)
         continue_learning = self._continue_learning(tasks)
         completed = sum(task.get("status") == "completed" for task in tasks)
@@ -85,19 +95,57 @@ class TodayLearningModule:
         return payload
 
     @staticmethod
-    def _tasks(plan: dict[str, Any] | None) -> list[dict[str, Any]]:
+    def _all_tasks(plan: dict[str, Any] | None) -> list[dict[str, Any]]:
         if not plan:
             return []
-        today = date.today().isoformat()
-        result = []
-        for task in plan.get("tasks") or []:
-            expected_date = task.get("expected_completion_date") or task.get("expectedCompletionDate")
-            if expected_date and expected_date != today:
-                continue
-            normalized = dict(task)
-            normalized.setdefault("expected_completion_date", expected_date or today)
-            result.append(normalized)
+        result: list[dict[str, Any]] = []
+        for day in plan.get("days", []):
+            expected_date = str(day["expected_date"])
+            for item in day.get("items", []):
+                title = str(item["title"])
+                result.append({
+                    "id": str(item["id"]),
+                    "title": title,
+                    "type": TodayLearningModule._task_type(item),
+                    "minutes": TodayLearningModule._minutes(title, str(item.get("description") or "")),
+                    "status": str(item["status"]),
+                    "reason": str(item.get("adaptive_reason") or day.get("adaptive_reason") or ""),
+                    "description": str(item.get("description") or ""),
+                    "knowledgePointIds": [],
+                    "planDayId": str(day.get("id")),
+                    "expectedCompletionDate": expected_date,
+                })
         return result
+
+    @classmethod
+    def _tasks_for_today(cls, plan: dict[str, Any] | None) -> list[dict[str, Any]]:
+        return [
+            task for task in cls._all_tasks(plan)
+            if task["expectedCompletionDate"] == date.today().isoformat()
+        ]
+
+    @staticmethod
+    def _minutes(title: str, description: str) -> int:
+        match = re.search(r"(\d+)\s*(?:分钟|min)", f"{title} {description}", re.IGNORECASE)
+        return int(match.group(1)) if match else 0
+
+    @staticmethod
+    def _task_type(item: dict[str, Any]) -> str:
+        source = str(item.get("source") or "")
+        if source == "review_due":
+            return "能力诊断"
+        if source == "spaced_review":
+            return "间隔复习"
+        if source == "weak_point":
+            return "针对性学习"
+        return str(item.get("item_type") or "学习任务")
+
+    @staticmethod
+    def _database_book_id(book_id: str) -> int:
+        aliases = {"ml": 2, "ml-001": 2, "machine_learning": 2, "dl": 1, "dl-001": 1, "deep_learning": 1}
+        if book_id in aliases:
+            return aliases[book_id]
+        return int(book_id)
 
     @staticmethod
     def _latest_goal(activities: list[LearningActivity]) -> str:

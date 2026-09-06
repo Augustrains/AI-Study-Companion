@@ -70,8 +70,10 @@ export type LearningPlanBook = { id: string; title: string; shortTitle: string }
  * 任务自己的 minutes 始终是 AI 的原始估计，不会被校准值改写。
  */
 export type PlanTimeBudget = { dailyMinutes: number; totalMinutes: number; estimatedDays: number; paceFactor: number; adjustedTotalMinutes: number };
-export type LearningPlanResult = { book: LearningPlanBook; goal: string; goalLevel: string; tasks: LearningTask[]; advice: string[]; resources: Source[]; timeBudget?: PlanTimeBudget };
+export type DailyLearningPlan = { date: string; title: string; reason: string; tasks: LearningTask[] };
+export type LearningPlanResult = { book: LearningPlanBook; goal: string; goalLevel: string; tasks: LearningTask[]; dailyPlans?: DailyLearningPlan[]; advice: string[]; resources: Source[]; timeBudget?: PlanTimeBudget };
 export type LearningPlanLookup = { exists: boolean; plan: LearningPlanResult | null };
+export type ReadingMaterialResult = { item_title: string; integrated_content: string; generated_by: string; references: Array<{ title: string; location: string }>; search_error?: string | null };
 export type TodayLearningResponse = {
   book: { id: string; title: string; shortTitle: string; subtitle: string };
   goal: string;
@@ -174,9 +176,26 @@ export type KnowledgePointResult = { learningDomain: string; knowledgePoints: Kn
 export type LearnerProfileWorkflowStart = { workflowId: string; status: "pending_confirmation"; draft: LearnerProfile; allowedActions: Array<"approve" | "edit" | "reject"> };
 
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const controller = new AbortController();
+  // 资料问答可能顺序执行查询改写和答案生成两次 LLM 调用。服务端每次
+  // 调用的预算是 120 秒，不能沿用普通交互的 15 秒预算，否则浏览器会
+  // 在服务端仍正常工作时主动中止请求。
+  const timeoutMs = path.includes("/learning-plans/weekly/generate")
+    ? 120000
+    // RAG 请求包含检索及 LLM 生成，前端路径经过 Vite 代理后为 /api/rag，
+    // 但这里传入 request 的是去掉 /api 前缀的 /rag/... 路径。
+    : path.startsWith("/rag/")
+      ? 270000
+    : path === "/diagnostics/start"
+      ? 45000
+      : path.includes("/learner-calibrations")
+        ? 120000
+        : 15000;
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(`${API_BASE_URL}${path}`, {
       headers: { "Content-Type": "application/json", ...getAuthHeaders(), ...init?.headers },
+      signal: controller.signal,
       ...init,
     });
     if (!response.ok) {
@@ -185,8 +204,13 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
     return response.status === 204 ? (undefined as T) : (await response.json()) as T;
   } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw { code: "REQUEST_TIMEOUT", message: "请求超时，请检查服务是否正常运行。", retryable: true } satisfies ApiError;
+    }
     if (error && typeof error === "object" && "code" in error) throw error;
     throw { code: "NETWORK_ERROR", message: "网络暂时不可用，请稍后重试。", retryable: true } satisfies ApiError;
+  } finally {
+    window.clearTimeout(timeout);
   }
 }
 
@@ -247,7 +271,7 @@ export const mockApi = {
     await wait(120);
     return { completed: true };
   },
-  async startDiagnostic(bookId: BookId): Promise<DiagnosticStartResult> {
+  async startDiagnostic(bookId: BookId, _learningGoal?: string, _planDayId?: string, _planItemId?: string): Promise<DiagnosticStartResult> {
     await wait();
     return { diagnosticId: `demo-${bookId}-diagnostic`, questions: getBookContent(bookId).questions };
   },
@@ -283,6 +307,9 @@ export const mockApi = {
       resources: [],
     };
   },
+  async generateWeeklyPlan(bookId: BookId, _reason = ""): Promise<LearningPlanResult> {
+    return mockApi.generatePlan({ diagnosticId: `mock-${bookId}`, bookId, goal: getBookContent(bookId).goal });
+  },
   async createMaterialPlan(payload: MaterialLearningPlanPayload): Promise<LearningPlanResult> {
     await wait(520);
     const book = books.find((item) => item.id === payload.bookId) ?? books[0];
@@ -298,6 +325,15 @@ export const mockApi = {
   async getLearningPlan(): Promise<LearningPlanLookup> {
     await wait(180);
     return { exists: false, plan: null };
+  },
+  async getReadingMaterials(_bookId: BookId, itemTitle: string): Promise<ReadingMaterialResult> {
+    await wait(300);
+    return {
+      item_title: itemTitle,
+      integrated_content: `${itemTitle}\n\n这是根据当前学习任务整理的阅读讲义。请先阅读核心概念，再结合示例完成后续练习。\n\n教材内容：当前模拟服务未连接教材正文。切换到真实服务后，将展示教材与网络资料的整合内容。`,
+      generated_by: "mock",
+      references: [],
+    };
   },
   async getTodayLearning(bookId: BookId): Promise<TodayLearningResponse> {
     await wait(180);
@@ -335,6 +371,7 @@ export const mockApi = {
     await wait(260);
     return { eventId: `event-${Date.now()}`, ...payload, saved: true };
   },
+  async completeLearningPlanItem(_itemId: string) { await wait(120); return { completed: true }; },
   async getLearningRecords(_params?: { category?: string; page?: number; pageSize?: number }): Promise<LearningActivityList> {
     await wait(260);
     return { records: [], total: 0, page: 1, pageSize: 50, hasNext: false };
@@ -373,6 +410,110 @@ export const mockApi = {
     return { exists: true, profile: payload };
   },
 };
+
+type WeeklyPlanItem = { id?: number; title: string; description?: string; status?: LearningTask["status"]; source?: string; item_type?: string; adaptive_reason?: string; minutes?: number; knowledge_point_id?: number };
+type WeeklyPlanDay = { id?: number; expected_date?: string; date?: string; title?: string; adaptive_reason?: string; items?: WeeklyPlanItem[] };
+type WeeklyPlanPayload = { planId?: number; book?: { id: number; book_name?: string }; goal?: { goal?: string; aim_level?: number } | string; days?: WeeklyPlanDay[]; advice?: string[]; resources?: Source[]; plan?: { goal?: string; days?: WeeklyPlanDay[] } };
+
+const databaseBookId: Record<string, number> = { ml: 2, dl: 1 };
+
+function planMinutes(item: WeeklyPlanItem): number {
+  if (item.minutes !== undefined) return item.minutes;
+  const match = `${item.title} ${item.description ?? ""}`.match(/(\d+)\s*(?:分钟|min)/i);
+  return match ? Number(match[1]) : 0;
+}
+
+function asLearningPlan(payload: WeeklyPlanPayload, bookId: BookId): LearningPlanResult {
+  const source = payload.days ? payload : payload.plan ?? {};
+  const book = books.find((item) => item.id === bookId) ?? books[0];
+  const goal = typeof payload.goal === "string" ? payload.goal : payload.goal?.goal ?? payload.plan?.goal ?? "";
+  const dailyPlans = (source.days ?? []).map((day) => {
+    const items = day.items ?? [];
+    const dayTasks = items.map((item, index) => ({
+      id: String(item.id ?? `${day.expected_date ?? day.date ?? "day"}-${index}`),
+      title: item.title,
+      type: item.item_type === "diagnostic" || item.source === "review_due" ? "能力诊断" : item.item_type === "reading" ? "阅读" : item.item_type === "review" || item.source === "spaced_review" ? "复习" : item.item_type === "practice" ? "练习" : "针对性学习",
+      minutes: planMinutes(item),
+      status: item.status ?? "todo",
+      reason: item.adaptive_reason ?? "",
+      description: item.description ?? "",
+      expectedCompletionDate: day.expected_date ?? day.date ?? "",
+      knowledgePointIds: item.knowledge_point_id ? [String(item.knowledge_point_id)] : [],
+      planDayId: day.id ? String(day.id) : undefined,
+    }));
+    return {
+      date: day.expected_date ?? day.date ?? "",
+      title: day.title ?? "当日学习计划",
+      reason: day.adaptive_reason ?? "根据当前掌握度与每日时长生成。",
+      tasks: dayTasks,
+    };
+  });
+  const tasks = dailyPlans.flatMap((day) => day.tasks);
+  const readingTitles = tasks.filter((task) => task.type === "阅读").map((task) => task.title).filter((title, index, list) => list.indexOf(title) === index);
+  const resources = payload.resources?.length ? payload.resources : readingTitles.slice(0, 5).map((title, index) => ({ id: `plan-reading-${index + 1}`, type: "教材", title: title.replace(/^阅读：/, ""), location: "对应教材章节", excerpt: "本周计划中的重点阅读材料。" }));
+  const advice = payload.advice?.length ? payload.advice : ["建议每天先完成诊断，再按“阅读—复习—练习”的顺序学习，逐步巩固本周重点。"];
+  return { book: { id: book.id, title: book.title, shortTitle: book.shortTitle }, goal, goalLevel: "", tasks, dailyPlans, advice, resources };
+}
+
+type MySqlProfileSetup = {
+  exists: boolean;
+  profile: {
+    background: string;
+    preferred_content_style: string;
+    self_assessed_level?: string;
+    current_confusions?: string;
+    additional_requirements?: string;
+    preferred_activity_types?: string[];
+    session_duration_minutes?: number | null;
+  } | null;
+};
+
+// The UI keeps stable short book keys while MySQL stores `books.id`.
+const profileBookMapping: Record<string, { uiBookId: string; databaseBookId: number }> = {
+  machine_learning: { uiBookId: "ml", databaseBookId: 2 },
+  deep_learning: { uiBookId: "dl", databaseBookId: 1 },
+  ml: { uiBookId: "ml", databaseBookId: 2 },
+  dl: { uiBookId: "dl", databaseBookId: 1 },
+};
+
+const aimLevelByTarget: Record<string, number> = {
+  "能够复述核心概念": 0,
+  "能够独立完成基础练习": 1,
+  "能够解决进阶应用问题": 2,
+  "能够指导他人 / 应对面试": 3,
+};
+
+function profileBookFor(learningDomain: string) {
+  const mapped = profileBookMapping[learningDomain];
+  if (!mapped) throw { code: "UNSUPPORTED_BOOK", message: "当前书籍尚未映射到数据库课程。", retryable: false } satisfies ApiError;
+  return mapped;
+}
+
+function asLearnerProfile(response: MySqlProfileSetup, userId: string, learningDomain: string): LearnerProfileResult {
+  if (!response.exists || !response.profile) return { exists: false, profile: null };
+  const profile = response.profile;
+  return {
+    exists: true,
+    profile: {
+      user_id: userId,
+      learning_domain: learningDomain,
+      background: profile.background,
+      self_assessed_level: profile.self_assessed_level ?? "unknown",
+      known_knowledge_point_ids: [],
+      known_knowledge_point_note: "",
+      unknown_knowledge_point_ids: [],
+      current_confusions: profile.current_confusions ?? "",
+      additional_requirements: profile.additional_requirements ?? "",
+      preferences: {
+        activity_types: profile.preferred_activity_types ?? [],
+        content_style: profile.preferred_content_style ?? "balanced",
+        difficulty: "adaptive",
+        session_duration_minutes: profile.session_duration_minutes ?? 30,
+        learning_frequency: "flexible",
+      },
+    },
+  };
+}
 
 /**
  * 真实服务的接口映射。启用 VITE_USE_REAL_API=true 后，页面可以切换到后端。
@@ -438,16 +579,24 @@ export const realApi = {
   }),
   // 诊断只在 start 这一步认人：后端把 userId 存进工作流状态，
   // 后续 answers / finish / 校准都按 diagnosticId 找回同一个用户，不需要再传。
-  startDiagnostic: (bookId: BookId, learningGoal?: string) => request<DiagnosticStartResult>("/diagnostics/start", { method: "POST", body: JSON.stringify({ bookId, learningGoal, userId: getCurrentUserId() }) }),
+  startDiagnostic: (bookId: BookId, learningGoal?: string, planDayId?: string, planItemId?: string, taskMode: "diagnostic" | "practice" = "diagnostic") => request<DiagnosticStartResult>("/diagnostics/start", { method: "POST", body: JSON.stringify({ bookId, learningGoal, userId: getCurrentUserId(), learningPlanDayId: planDayId ? Number(planDayId) : undefined, learningPlanItemId: planItemId ? Number(planItemId) : undefined, taskMode }) }),
+  completeLearningPlanItem: (itemId: string) => request(`/learning-plans/weekly/items/${itemId}/complete`, { method: "POST", body: JSON.stringify({ userId: getCurrentUserId() }) }),
   submitDiagnosticAnswer: (diagnosticId: string, payload: { questionId: string; answer: string; skipped?: boolean }) => request(`/diagnostics/${diagnosticId}/answers`, { method: "POST", body: JSON.stringify(payload) }),
   finishDiagnostic: (diagnosticId: string) => request<DiagnosticResult>(`/diagnostics/${diagnosticId}/finish`, { method: "POST" }),
   submitCalibration: (payload: { diagnosticId: string; level: string; reason: string }) => request("/learner-calibrations", { method: "POST", body: JSON.stringify(payload) }),
-  generatePlan: (payload: { diagnosticId: string; bookId: BookId; goal: string }) => request<LearningPlanResult>("/learning-plans/generate", { method: "POST", body: JSON.stringify({ ...payload, userId: getCurrentUserId() }) }),
+  generateWeeklyPlan: async (bookId: BookId, reason = ""): Promise<LearningPlanResult> => {
+    const response = await request<WeeklyPlanPayload>("/learning-plans/weekly/generate", { method: "POST", body: JSON.stringify({ userId: Number(getCurrentUserId()), bookId: databaseBookId[bookId], reason }) });
+    return asLearningPlan(response, bookId);
+  },
   createMaterialPlan: (payload: MaterialLearningPlanPayload) => request<LearningPlanResult>("/learning-plans/material", { method: "POST", body: JSON.stringify({ ...payload, userId: getCurrentUserId() }) }),
-  getLearningPlan: (bookId: BookId, diagnosticId?: string) => {
-    const query = new URLSearchParams({ bookId, userId: getCurrentUserId() });
-    if (diagnosticId) query.set("diagnosticId", diagnosticId);
-    return request<LearningPlanLookup>(`/learning-plans?${query.toString()}`);
+  getLearningPlan: async (bookId: BookId) => {
+    const query = new URLSearchParams({ bookId: String(databaseBookId[bookId]), userId: String(Number(getCurrentUserId())) });
+    const response = await request<{ exists: boolean; plan: WeeklyPlanPayload | null }>(`/learning-plans/weekly?${query.toString()}`);
+    return { exists: response.exists, plan: response.plan ? asLearningPlan(response.plan, bookId) : null };
+  },
+  getReadingMaterials: async (bookId: BookId, itemTitle: string) => {
+    const query = new URLSearchParams({ bookId: String(databaseBookId[bookId]), itemTitle });
+    return request<ReadingMaterialResult>(`/learning-plans/weekly/materials?${query.toString()}`);
   },
   getTodayLearning: (bookId: BookId) => request<TodayLearningResponse>(`/today-learning?userId=${encodeURIComponent(getCurrentUserId())}&bookId=${encodeURIComponent(bookId)}`),
   writeLearningEvent: (payload: { taskId: string; taskTitle: string; eventType: string; status: string; durationSeconds?: number; plannedMinutes?: number }) => request("/learning-events", { method: "POST", body: JSON.stringify({ ...payload, userId: getCurrentUserId() }) }),
@@ -457,11 +606,40 @@ export const realApi = {
     return request<LearningActivityList>(`/learning-records?${query.toString()}`);
   },
   askQuestion: (payload: QaQuestionPayload) => request<QaResult>(`/rag/conversations/${encodeURIComponent(payload.conversationId ?? "")}/messages`, { method: "POST", body: JSON.stringify({ bookId: payload.bookId, question: payload.question, userId: getCurrentUserId(), allowGeneralFallback: payload.allowGeneralFallback ?? false, answerMode: payload.answerMode ?? "direct", learningTaskId: payload.learningTaskId ?? null }) }),
-  getLearnerProfile: (userId: string, learningDomain: string) => request<LearnerProfileResult>(`/learner-profile?user_id=${encodeURIComponent(userId)}&learning_domain=${encodeURIComponent(learningDomain)}`),
+  getLearnerProfile: async (userId: string, learningDomain: string): Promise<LearnerProfileResult> => {
+    const book = profileBookFor(learningDomain);
+    const query = new URLSearchParams({ user_id: userId, book_id: String(book.databaseBookId) });
+    const response = await request<MySqlProfileSetup>(`/learner-profile/setup?${query.toString()}`);
+    return asLearnerProfile(response, userId, learningDomain);
+  },
   getKnowledgePoints: (learningDomain: string) => request<KnowledgePointResult>(`/learner-profile/knowledge-points?learning_domain=${encodeURIComponent(learningDomain)}`),
   saveLearnerProfile: async (payload: LearnerProfilePayload) => {
-    const started = await request<LearnerProfileWorkflowStart>("/learner-profile/workflows", { method: "POST", body: JSON.stringify(payload) });
-    return request<LearnerProfileResult>(`/learner-profile/workflows/${encodeURIComponent(started.workflowId)}/review`, { method: "POST", body: JSON.stringify({ action: "approve" }) });
+    const book = profileBookFor(payload.learning_domain);
+    const goalResult = await realApi.getLearnerGoal(book.uiBookId);
+    if (!goalResult.exists || !goalResult.goal) {
+      throw { code: "LEARNING_GOAL_REQUIRED", message: "请先在“选书与目标”中保存目标，再保存学习画像。", retryable: false } satisfies ApiError;
+    }
+    const goal = goalResult.goal;
+    const setup = await request<MySqlProfileSetup>("/learner-profile/setup", {
+      method: "POST",
+      body: JSON.stringify({
+        user_id: Number(payload.user_id),
+        book_id: book.databaseBookId,
+        background: payload.background,
+        preferred_content_style: payload.preferences.content_style,
+        self_assessed_level: payload.self_assessed_level,
+        current_confusions: payload.current_confusions,
+        additional_requirements: payload.additional_requirements,
+        preferred_activity_types: payload.preferences.activity_types,
+        session_duration_minutes: payload.preferences.session_duration_minutes,
+        goal: goal.targetLevel,
+        aim_level: aimLevelByTarget[goal.targetLevel] ?? 1,
+        daily_minutes: goal.dailyMinutes,
+        start_date: new Date().toISOString().slice(0, 10),
+        target_date: goal.targetDate ?? null,
+      }),
+    });
+    return asLearnerProfile(setup, payload.user_id, payload.learning_domain);
   },
 };
 

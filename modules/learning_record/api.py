@@ -22,7 +22,11 @@ def build_router(module: LearningRecordModule) -> APIRouter:
             plan_id=payload.plan_id,
             book_id=payload.book_id,
             knowledge_point_ids=payload.knowledge_point_ids,
-            detail=payload.detail,
+            detail={
+                **payload.detail,
+                "duration_seconds": payload.duration_seconds,
+                "planned_minutes": payload.planned_minutes,
+            },
             client_request_id=payload.client_request_id,
         )
         return LearningEventResponse(

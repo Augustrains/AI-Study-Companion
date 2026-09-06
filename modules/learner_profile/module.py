@@ -22,7 +22,18 @@ class MySqlLearnerProfileModule:
         points = self.repository.knowledge_points(int(payload["book_id"]))
         existing = self.repository.load(int(payload["user_id"]), int(payload["book_id"])) or {}
         prior_scores = {int(item["knowledge_point_id"]): float(item.get("mastery_score") or 0.0) for item in existing.get("mastery", [])}
-        agent_input = KnowledgePointAgentInput(background=str(payload["background"]), goal=str(payload["goal"]), aim_level=int(payload["aim_level"]), knowledge_points=points, prior_mastery_scores=prior_scores)
+        agent_input = KnowledgePointAgentInput(
+            background=str(payload["background"]),
+            goal=str(payload["goal"]),
+            aim_level=int(payload["aim_level"]),
+            knowledge_points=points,
+            prior_mastery_scores=prior_scores,
+            self_assessed_level=str(payload.get("self_assessed_level") or "unknown"),
+            current_confusions=str(payload.get("current_confusions") or ""),
+            additional_requirements=str(payload.get("additional_requirements") or ""),
+            preferred_activity_types=list(payload.get("preferred_activity_types") or []),
+            session_duration_minutes=payload.get("session_duration_minutes"),
+        )
         aim_scores = self.goal_agent.analyze(agent_input)
         mastery_scores = self.mastery_agent.analyze(agent_input)
         point_scores = {point_id: {"aim_score": aim_scores[point_id], "mastery_score": mastery_scores[point_id], "confidence": 0.35 if mastery_scores[point_id] > 0 else 0.2} for point_id in aim_scores}

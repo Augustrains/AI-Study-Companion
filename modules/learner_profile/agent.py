@@ -17,6 +17,11 @@ class KnowledgePointAgentInput:
     aim_level: int
     knowledge_points: list[dict[str, Any]]
     prior_mastery_scores: dict[int, float] | None = None
+    self_assessed_level: str = "unknown"
+    current_confusions: str = ""
+    additional_requirements: str = ""
+    preferred_activity_types: list[str] | None = None
+    session_duration_minutes: int | None = None
 
     # ``learning_goal.aim_level`` is intentionally stored as a stable numeric
     # value in MySQL.  Agents, however, should receive the learner's selected
@@ -39,6 +44,20 @@ class KnowledgePointAgentInput:
         """The goal text supplied to agents, combining both persisted fields."""
         goal = self.goal.strip() or "未填写具体目标"
         return f"{goal}\n目标水平：{self.aim_level_description}"
+
+    @property
+    def learner_profile_context(self) -> str:
+        """Non-score profile evidence available to the mastery assessment agent."""
+        activities = "、".join(self.preferred_activity_types or []) or "未说明"
+        duration = f"{self.session_duration_minutes} 分钟" if self.session_duration_minutes else "未说明"
+        return (
+            f"学习背景：{self.background.strip() or '未说明'}\n"
+            f"自评水平：{self.self_assessed_level}\n"
+            f"当前困惑：{self.current_confusions.strip() or '未说明'}\n"
+            f"附加要求：{self.additional_requirements.strip() or '未说明'}\n"
+            f"偏好活动：{activities}\n"
+            f"单次学习时长：{duration}"
+        )
 
 
 class _ConstrainedKnowledgePointAgent:
@@ -114,7 +133,7 @@ class CurrentMasteryAssessmentAgent(_ConstrainedKnowledgePointAgent):
 
     def _prompt(self, agent_input: KnowledgePointAgentInput) -> str:
         context = {
-            "background": agent_input.background,
+            "learnerProfile": agent_input.learner_profile_context,
             "finalGoal": agent_input.learning_goal_context,
             "priorMasteryScores": agent_input.prior_mastery_scores or {},
             "knowledgePoints": agent_input.knowledge_points,

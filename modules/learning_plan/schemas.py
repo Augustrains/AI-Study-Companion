@@ -13,6 +13,7 @@ class GenerateWeeklyLearningPlanRequest(BaseModel):
     user_id: int = Field(alias="userId", gt=0)
     book_id: int = Field(alias="bookId", gt=0)
     start_date: date | None = Field(default=None, alias="startDate")
+    reason: str = Field(default="", max_length=1000)
 
 
 class WeeklyLearningPlanResponse(BaseModel):
@@ -24,6 +25,9 @@ class WeeklyLearningPlanResponse(BaseModel):
     fixed_minutes: dict[str, int] = Field(alias="fixedMinutes")
     knowledge_point_workloads: list[dict[str, Any]] = Field(alias="knowledgePointWorkloads")
     deferred_knowledge_point_ids: list[int] = Field(alias="deferredKnowledgePointIds")
+    prepared_content: dict[str, int] = Field(default_factory=dict, alias="preparedContent")
+    advice: list[str] = Field(default_factory=list)
+    resources: list[dict[str, Any]] = Field(default_factory=list)
     days: list[dict[str, Any]]
 
 

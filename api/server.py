@@ -9,11 +9,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from modules.common import api as common_api
+from modules.auth.api import build_router as build_auth_router
 from modules.diagnosis.api import build_router as build_diagnosis_router
 from modules.learner_profile.api import build_router as build_profile_router
+from modules.learner_goals.api import build_router as build_learner_goal_router
 from modules.learning_plan.api import build_router as build_learning_plan_router
 from modules.material_qa.api import build_router as build_material_qa_router
 from modules.learning_record.api import build_router as build_learning_record_router
+from modules.today_learning.api import build_router as build_today_learning_router
 
 
 logger = logging.getLogger(__name__)
@@ -81,9 +84,12 @@ def create_app(dependencies: Any, *, lifespan: Any = None) -> FastAPI:
         )
 
     #注册业务模块路由
+    app.include_router(build_auth_router(dependencies.auth))
     app.include_router(build_profile_router(dependencies.profile))
+    app.include_router(build_learner_goal_router(dependencies.learner_goals))
     app.include_router(build_diagnosis_router(dependencies.diagnosis))
     app.include_router(build_learning_plan_router(dependencies.learning_plan))
     app.include_router(build_material_qa_router(dependencies.material_qa))
     app.include_router(build_learning_record_router(dependencies.learning_record))
+    app.include_router(build_today_learning_router(dependencies.today_learning))
     return app

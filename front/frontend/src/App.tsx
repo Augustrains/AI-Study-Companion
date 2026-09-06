@@ -8,7 +8,7 @@ import { InlineResources, LearningResourcesView } from "./components/LearningRes
 import { HelpCenterView } from "./components/HelpCenter";
 import { CommunityView } from "./components/CommunityView";
 import { auth, getSession, type AuthUser } from "./services/session";
-import { api, type ApiError, type BookCatalogItem, type DiagnosticResult, type LearningActivity, type LearningPlanResult, type PlanTimeBudget, type QaAnswerMode, type TodayLearningResponse } from "./services/api";
+import { api, type ApiError, type BookCatalogItem, type DiagnosticResult, type LearningActivity, type LearningPlanResult, type PlanTimeBudget, type QaAnswerMode, type TodayLearningResponse, type DailyLearningPlan } from "./services/api";
 import {
   books,
   getBookContent,
@@ -87,7 +87,19 @@ const statusLabels: Record<TaskStatus, string> = {
   rescheduled: "已改期",
 };
 
-const errorMessage = (error: unknown) => (error as ApiError)?.message ?? "操作失败，请稍后重试。";
+const errorMessage = (error: unknown) => {
+  const apiError = error as ApiError;
+  const details = apiError?.details as { previous_title?: string; previous_item_id?: number } | undefined;
+  if (apiError?.message === "complete the previous learning-plan task first") {
+    return details?.previous_title
+      ? `请先完成上一项任务“${details.previous_title}”，再开始当天诊断。`
+      : "请先完成上一项学习任务，再开始当天诊断。";
+  }
+  if (apiError?.message === "learningPlanItemId does not belong to learningPlanDayId") {
+    return "当前诊断任务与学习计划不匹配，请刷新学习计划后重试。";
+  }
+  return apiError?.message ?? "操作失败，请稍后重试。";
+};
 
 /** 记录该用户是否已完成「选书与目标」，决定登录后是否先进入引导流程。 */
 const goalStorageKey = (userId: string) => `study-companion.goal.${userId}`;
@@ -112,6 +124,7 @@ function App() {
   const [modal, setModal] = useState<ModalState | null>(null);
   const [taskStates, setTaskStates] = useState<Record<string, TaskStatus>>({});
   const [generatedPlan, setGeneratedPlan] = useState<LearningPlanResult | null>(null);
+  const [planRegenerating, setPlanRegenerating] = useState(false);
   const [todayLearning, setTodayLearning] = useState<TodayLearningResponse | null>(null);
   const [planTab, setPlanTab] = useState<"overview" | "knowledge">("overview");
   const [goalLevel, setGoalLevel] = useState("能够独立完成基础练习");
@@ -128,7 +141,9 @@ function App() {
   const [skippedQuestions, setSkippedQuestions] = useState<string[]>([]);
   const [diagnosticPaused, setDiagnosticPaused] = useState(false);
   const [diagnosticBusy, setDiagnosticBusy] = useState(false);
+  const [diagnosticError, setDiagnosticError] = useState<string | null>(null);
   const [diagnosticId, setDiagnosticId] = useState(`demo-${bookId}-diagnostic`);
+  const [practiceTask, setPracticeTask] = useState<LearningTask | null>(null);
   const [diagnosticResult, setDiagnosticResult] = useState<DiagnosticResult | null>(null);
   const [calibration, setCalibration] = useState<Calibration | null>(null);
   const [calibrationReason, setCalibrationReason] = useState("");
@@ -411,27 +426,44 @@ function App() {
 
   const goTo = (key: NavKey) => {
     if (key === "diagnostic") {
-      void startDiagnostic();
+      const todayDiagnostic = currentTasks.find((task) => task.type === "能力诊断" && (task.status ?? "todo") !== "completed");
+      void startDiagnostic(todayDiagnostic);
       return;
     }
     setActiveNav(key);
   };
 
-  const startDiagnostic = async () => {
+  const startDiagnostic = async (task?: LearningTask) => {
+    const today = new Date().toISOString().slice(0, 10);
+    let boundTask = task ?? currentTasks.find((candidate) => candidate.type === "能力诊断" && candidate.expectedCompletionDate?.startsWith(today) && (taskStates[candidate.id] ?? candidate.status) !== "completed") ?? currentTasks.find((candidate) => candidate.type === "能力诊断" && (taskStates[candidate.id] ?? candidate.status) !== "completed");
+    if (!boundTask) {
+      try {
+        const latest = await api.getLearningPlan(bookId);
+        const todayPlan = latest.plan?.dailyPlans?.find((day) => day.date.startsWith(today));
+        boundTask = todayPlan?.tasks.find((candidate) => candidate.type === "能力诊断" && candidate.status !== "completed");
+      } catch {
+        // The normal error handling below reports unavailable diagnostics.
+      }
+    }
     setActiveNav("diagnostic");
     setDiagnosticStage("question");
     setDiagnosticIndex(0);
     setDiagnosticAnswers({});
+    setDiagnosticError(null);
+    // 清掉初始化/上一轮题目，避免后端加载期间误显示默认题目。
     setDiagnosticQuestions([]);
     setSkippedQuestions([]);
     setDiagnosticPaused(false);
     setDiagnosticBusy(true);
+    const isPractice = Boolean(boundTask && boundTask.type !== "能力诊断");
+    setPracticeTask(isPractice ? boundTask ?? null : null);
     try {
-      const result = await api.startDiagnostic(bookId, content.goal);
+      const result = await api.startDiagnostic(bookId, content.goal, boundTask?.planDayId, boundTask?.id, isPractice ? "practice" : "diagnostic");
       setDiagnosticId(result.diagnosticId);
       setDiagnosticQuestions(result.questions);
       showToast("诊断已开始", `共 ${result.questions.length} 道题，答案会逐题保存。`);
     } catch (error) {
+      setDiagnosticError(errorMessage(error));
       showToast("诊断启动失败", errorMessage(error));
     } finally {
       setDiagnosticBusy(false);
@@ -478,6 +510,24 @@ function App() {
   const resumeDiagnostic = () => setDiagnosticPaused(false);
 
   const submitCalibration = async () => {
+    if (practiceTask) {
+      setDiagnosticBusy(true);
+      try {
+        await api.writeLearningEvent({ taskId: practiceTask.id, taskTitle: practiceTask.title, eventType: "task_completed", status: "completed", durationSeconds: Math.round(practiceTask.minutes * 60), plannedMinutes: practiceTask.minutes });
+        if (practiceTask.id) await api.completeLearningPlanItem(practiceTask.id);
+        setTaskStates((states) => ({ ...states, [practiceTask.id]: "completed" }));
+        await loadRecords();
+        await reloadTodayLearning();
+        setPracticeTask(null);
+        setActiveNav("today");
+        showToast("练习已完成", "本次练习已记录，不会改变学习计划。 ");
+      } catch (error) {
+        showToast("练习完成失败", errorMessage(error));
+      } finally {
+        setDiagnosticBusy(false);
+      }
+      return;
+    }
     if (!calibration) {
       showToast("请选择自我判断", "提交前请先选择与你最接近的能力水平。 ");
       return;
@@ -486,10 +536,12 @@ function App() {
     try {
       await api.submitCalibration({ diagnosticId, level: calibration, reason: calibrationReason });
       await loadRecords();
-      const plan = await api.generatePlan({ diagnosticId, bookId, goal: content.goal });
-      setGeneratedPlan(plan);
-      setActiveNav("plan");
-      showToast("校准已提交", "学习计划已根据新的校准信息更新。 ");
+      await reloadTodayLearning();
+      await api.getLearningPlan(bookId).then((result) => {
+        if (result.exists && result.plan) setGeneratedPlan(result.plan);
+      }).catch(() => undefined);
+      setActiveNav("today");
+      showToast("校准已提交", "诊断结果已用于更新掌握度，后续计划会据此动态调整。 ");
     } catch (error) {
       showToast("校准提交失败", errorMessage(error));
     } finally {
@@ -497,9 +549,37 @@ function App() {
     }
   };
 
-  const updateTask = async (task: LearningTask, actualMinutes?: number) => {
+  const ensureWeeklyPlan = async (profileBookId: BookId, force = false, regenerationReason = "") => {
+    if (force) setPlanRegenerating(true);
+    try {
+      const existing = await api.getLearningPlan(profileBookId);
+      if (!force && existing.exists && existing.plan) {
+        setGeneratedPlan(existing.plan);
+        setActiveNav("plan");
+        return;
+      }
+      const plan = await api.generateWeeklyPlan(profileBookId, regenerationReason);
+      setGeneratedPlan(plan);
+      await reloadTodayLearning(profileBookId);
+      setActiveNav("plan");
+      showToast("学习计划已生成", "已根据你的目标和学习画像安排未来 7 天任务；每日诊断会继续动态调整后续安排。");
+    } catch (error) {
+      showToast(force ? "重新生成失败" : "暂时无法生成计划", `请确认已保存学习目标和学习画像：${errorMessage(error)}`);
+    } finally {
+      if (force) setPlanRegenerating(false);
+    }
+  };
+
+  const openRegeneratePlan = () => setModal({
+    title: "重新生成学习计划",
+    subtitle: "当前未完成的计划将被新的 7 天计划替换，已完成记录不会删除。",
+    content: <RegeneratePlanForm onConfirm={(reason) => { closeModal(); void ensureWeeklyPlan(bookId, true, reason); }} />,
+    secondary: { label: "取消", onClick: closeModal },
+  });
+
+  const updateTask = async (task: LearningTask, actualMinutes?: number, forceComplete = false) => {
     const currentStatus = taskStates[task.id] ?? task.status;
-    const nextStatus: TaskStatus = currentStatus === "completed" ? "completed" : currentStatus === "in_progress" ? "completed" : "in_progress";
+    const nextStatus: TaskStatus = forceComplete || currentStatus === "completed" || currentStatus === "in_progress" ? "completed" : "in_progress";
     const taskIndex = currentTasks.findIndex((item) => item.id === task.id);
     const nextTask = nextStatus === "completed"
       ? currentTasks.slice(taskIndex + 1).find((item) => (taskStates[item.id] ?? item.status) !== "completed")
@@ -520,6 +600,11 @@ function App() {
           durationSeconds: Math.round((actualMinutes ?? task.minutes) * 60),
           plannedMinutes: task.minutes,
         });
+        // 学习事件用于记录轨迹，计划项状态需要单独持久化，
+        // 否则刷新页面后会从数据库重新显示为未完成。
+        if (/^\d+$/.test(task.id)) {
+          await api.completeLearningPlanItem(task.id);
+        }
       }
       await loadRecords();
       await reloadTodayLearning();
@@ -537,17 +622,57 @@ function App() {
         ...(nextTask && previousNextStatus ? { [nextTask.id]: previousNextStatus } : {}),
       }));
       showToast("任务更新失败", errorMessage(error));
+      // 学习事件可能已成功写入，即使计划项状态更新失败也刷新记录列表。
+      await loadRecords();
+    }
+  };
+
+  const startReadingTask = async (task: LearningTask) => {
+    if ((taskStates[task.id] ?? task.status) !== "todo") return;
+    setTaskStates((states) => ({ ...states, [task.id]: "in_progress" }));
+    try {
+      await api.writeLearningEvent({ taskId: task.id, taskTitle: task.title, eventType: "task_started", status: "in_progress", plannedMinutes: task.minutes });
+    } catch (error) {
+      setTaskStates((states) => ({ ...states, [task.id]: task.status }));
+      showToast("阅读开始记录失败", errorMessage(error));
     }
   };
 
   const openTask = (task: LearningTask) => {
     const status = taskStates[task.id] ?? task.status;
+    if (task.title.startsWith("阅读：")) {
+      const openingStatus = taskStates[task.id] ?? task.status;
+      if (openingStatus === "todo") void startReadingTask(task);
+      setModal({
+        title: task.title,
+        subtitle: "教材与网络资料整合讲义 · 正在加载",
+        content: <div className="task-detail"><p>正在定位教材章节并整合相关网络资料…</p></div>,
+        secondary: { label: "关闭", onClick: closeModal },
+      });
+      void api.getReadingMaterials(bookId, task.title).then((reading) => {
+        setModal({
+          title: task.title,
+          subtitle: reading.generated_by === "llm" ? "教材为主 · 已整合网络补充" : "教材内容 · 网络资料暂不可用时使用教材兜底",
+      content: <div className="task-detail reading-detail"><div className="reading-content" style={{ whiteSpace: "pre-wrap" }}>{reading.integrated_content}</div>{reading.search_error && <p className="inline-hint">{reading.search_error}</p>}{reading.references.length > 0 && <div className="detail-grid"><span>内容来源</span><div>{reading.references.map((reference) => <p key={`${reference.title}-${reference.location}`}><strong>{reference.title}</strong><br /><small>{reference.location}</small></p>)}</div></div>}</div>,
+          secondary: { label: "关闭", onClick: closeModal },
+          primary: status === "completed" ? undefined : { label: "完成阅读", onClick: () => { closeModal(); void updateTask(task, undefined, true); } },
+        });
+      }).catch((error) => showToast("阅读内容加载失败", errorMessage(error)));
+      return;
+    }
+    const isPracticeTask = task.type === "练习" || task.type === "复习" || task.type.startsWith("练习") || task.type.startsWith("复习") || task.title.startsWith("练习：") || task.title.startsWith("复习：");
+    if (isPracticeTask && status !== "completed") {
+      void startDiagnostic(task);
+      return;
+    }
     setModal({
       title: task.title,
       subtitle: `${task.type} · ${task.minutes} 分钟 · ${statusLabels[status]}`,
       content: <div className="task-detail"><p>{task.description}</p><div className="detail-grid"><span>学习目标</span><strong>{task.learningGoal ?? content.goal}</strong><span>推荐理由</span><strong>{task.reason}</strong></div><InlineResources knowledgePointIds={task.knowledgePointIds ?? []} title="做之前可以先看" /></div>,
       secondary: { label: "关闭", onClick: closeModal },
-      primary: status === "completed"
+      primary: task.type === "能力诊断" && status !== "completed"
+        ? { label: "开始诊断", onClick: () => { closeModal(); void startDiagnostic(task); } }
+        : status === "completed"
         ? undefined
         : status === "in_progress"
           ? { label: "完成任务", onClick: () => openTaskCompletion(task) }
@@ -734,10 +859,10 @@ function App() {
         <header className="topbar"><div className="mobile-brand"><div className="brand-mark"><Icon name="book-open" size={20} /></div></div><div className="topbar-context"><span className="context-label">当前学习内容</span><label className="book-select"><Icon name="book" size={18} /><select value={bookId} onChange={(event) => resetBookState(event.target.value as BookId)} aria-label="选择当前学习内容">{bookOptions.map((book) => <option key={book.id} value={book.id}>{book.title}</option>)}</select><Icon name="chevron-down" size={15} /></label></div></header>
         <div className="page-body">
         {activeNav === "today" && <TodayView book={currentBook} content={content} tasks={currentTasks} dashboard={todayDashboard} goTo={goTo} startDiagnostic={startDiagnostic} onOpenTask={openTask} onOpenKnowledge={openKnowledgeDetail} onOpenRecords={() => goTo("records")} />}
-        {activeNav === "profile" && <LearnerProfileView bookId={bookId} onNotice={showToast} />}
-        {activeNav === "diagnostic" && <DiagnosticView questions={diagnosticQuestions} index={diagnosticIndex} answers={diagnosticAnswers} skippedQuestions={skippedQuestions} paused={diagnosticPaused} busy={diagnosticBusy} stage={diagnosticStage} result={diagnosticResult} calibration={calibration} calibrationReason={calibrationReason} setAnswer={(id) => currentQuestion && setDiagnosticAnswers((answers) => ({ ...answers, [currentQuestion.id]: id }))} onPrevious={() => setDiagnosticIndex((index) => Math.max(0, index - 1))} onSubmit={submitDiagnostic} onSkip={skipDiagnostic} onPause={() => setDiagnosticPaused(true)} onResume={resumeDiagnostic} onCalibration={setCalibration} onReason={setCalibrationReason} onEvidence={openEvidence} onCalibrationSubmit={submitCalibration} />}
-        {activeNav === "plan" && (generatedPlan ? <PlanView book={generatedPlan.book} goal={generatedPlan.goal} goalLevel={generatedPlan.goalLevel} tasks={generatedPlan.tasks.map((task) => ({ ...task, status: taskStates[task.id] ?? task.status }))} advice={generatedPlan.advice} resources={generatedPlan.resources} timeBudget={generatedPlan.timeBudget} tab={planTab} setTab={setPlanTab} onOpenTask={openTask} onAdjustGoal={openGoalEditor} onOpenSource={openSource} /> : <PlanEmptyView onStartDiagnostic={startDiagnostic} />)}
-        {activeNav === "records" && <RecordsView records={records} total={recordTotal} page={recordPage} pageSize={recordPageSize} loading={recordsLoading} filter={recordFilter} setFilter={changeRecordFilter} onPageChange={setRecordPage} onOpenRecord={openRecord} onReview={() => startDiagnostic()} />}
+        {activeNav === "profile" && <LearnerProfileView bookId={bookId} onNotice={showToast} onProfileSaved={ensureWeeklyPlan} />}
+        {activeNav === "diagnostic" && <DiagnosticView questions={diagnosticQuestions} index={diagnosticIndex} answers={diagnosticAnswers} skippedQuestions={skippedQuestions} paused={diagnosticPaused} busy={diagnosticBusy} error={diagnosticError} stage={diagnosticStage} result={diagnosticResult} calibration={calibration} calibrationReason={calibrationReason} practice={Boolean(practiceTask)} setAnswer={(id) => currentQuestion && setDiagnosticAnswers((answers) => ({ ...answers, [currentQuestion.id]: id }))} onPrevious={() => setDiagnosticIndex((index) => Math.max(0, index - 1))} onSubmit={submitDiagnostic} onSkip={skipDiagnostic} onPause={() => setDiagnosticPaused(true)} onResume={resumeDiagnostic} onCalibration={setCalibration} onReason={setCalibrationReason} onEvidence={openEvidence} onCalibrationSubmit={submitCalibration} />}
+        {activeNav === "plan" && (planRegenerating ? <PlanGeneratingView /> : generatedPlan ? <PlanView book={generatedPlan.book} goal={generatedPlan.goal} goalLevel={generatedPlan.goalLevel} tasks={generatedPlan.tasks.map((task) => ({ ...task, status: taskStates[task.id] ?? task.status }))} dailyPlans={generatedPlan.dailyPlans?.map((day) => ({ ...day, tasks: day.tasks.map((task) => ({ ...task, status: taskStates[task.id] ?? task.status })) }))} advice={generatedPlan.advice} resources={generatedPlan.resources} timeBudget={generatedPlan.timeBudget} tab={planTab} setTab={setPlanTab} onOpenTask={openTask} onAdjustGoal={openGoalEditor} onRegenerate={openRegeneratePlan} onOpenSource={openSource} /> : <PlanEmptyView onGenerate={() => void ensureWeeklyPlan(bookId)} onOpenProfile={() => setActiveNav("profile")} />)}
+        {activeNav === "records" && <RecordsView records={records} total={recordTotal} page={recordPage} pageSize={recordPageSize} loading={recordsLoading} filter={recordFilter} setFilter={changeRecordFilter} onPageChange={setRecordPage} onOpenRecord={openRecord} onReview={() => startDiagnostic(currentTasks.find((task) => task.type === "能力诊断" && task.status !== "completed"))} />}
         {activeNav === "goals" && <GoalsSetupView initialBookId={bookId} onSaved={handleGoalSaved} onSkip={() => setActiveNav("today")} />}
         {activeNav === "settings" && <SettingsView user={user} onUserUpdated={setUser} onLogout={handleLogout} />}
         {activeNav === "resources" && <LearningResourcesView knowledgePointNames={knowledgePointNames} />}
@@ -762,8 +887,8 @@ function PageHeader({ eyebrow, title, description, action }: { eyebrow?: string;
   return <div className="page-header"><div>{eyebrow && <span className="eyebrow">{eyebrow}</span>}<h1>{title}</h1>{description && <p>{description}</p>}</div>{action}</div>;
 }
 
-function PlanEmptyView({ onStartDiagnostic }: { onStartDiagnostic: () => void }) {
-  return <div className="page-stack"><PageHeader eyebrow="学习闭环 · 目标到任务" title="学习计划" description="完成诊断并提交校准后，由后端生成学习计划。" /><article className="card empty-state"><Icon name="calendar" size={21} /><strong>暂时没有学习计划</strong><span>请先完成能力诊断，系统会根据诊断会话生成计划。</span><button className="primary-button" onClick={onStartDiagnostic}>开始诊断</button></article></div>;
+function PlanEmptyView({ onGenerate, onOpenProfile }: { onGenerate: () => void; onOpenProfile: () => void }) {
+  return <div className="page-stack"><PageHeader eyebrow="学习闭环 · 目标到任务" title="学习计划" description="学习画像已建立后即可生成未来 7 天的学习计划；每日诊断只负责动态调整后续任务。" /><article className="card empty-state"><Icon name="calendar" size={21} /><strong>暂时没有学习计划</strong><span>如果你已完成学习画像，直接生成计划即可；否则请先补充画像。</span><div className="button-row"><button className="primary-button" onClick={onGenerate}>生成 7 天学习计划</button><button className="outline-button" onClick={onOpenProfile}>查看学习画像</button></div></article></div>;
 }
 
 function TodayView({ book, content, tasks, dashboard, goTo, startDiagnostic, onOpenTask, onOpenKnowledge, onOpenRecords }: { book: Book; content: ReturnType<typeof getBookContent>; tasks: LearningTask[]; dashboard: TodayLearningResponse | null; goTo: (key: NavKey) => void; startDiagnostic: () => void; onOpenTask: (task: LearningTask) => void; onOpenKnowledge: () => void; onOpenRecords: () => void }) {
@@ -826,18 +951,20 @@ function LegacyTodayView({ book, content, tasks, goTo, startDiagnostic, onOpenTa
     ? `${book.title} · ${book.subtitle} · 本周已学习 ${studyHours} 小时`
     : `${book.title} · ${book.subtitle}`;
 
-  return <div className="page-stack"><PageHeader eyebrow="持续学习，循序提升" title="今日学习" description={headerDescription} /><section className="stat-grid"><article className="card progress-card"><div className="card-heading"><span>本周进度</span><Icon name="more" size={18} /></div>{hasWeekly ? <><div className="progress-content"><div className="ring-progress" style={{ "--progress": `${progressPercent}%` } as CSSProperties}><span>{progressPercent}<small>%</small></span></div><div className="progress-facts"><div><strong>{weekly?.completedTaskCount ?? 0}/{weekly?.totalTaskCount ?? 0}</strong><span>已完成任务</span></div><div><strong>{studyHours} h</strong><span>学习时长</span></div><div><strong>{accuracy}%</strong><span>正确率</span></div></div></div><div className="mini-bars" aria-label="本周学习时长趋势">{barHeights.map((height, index) => <i style={{ height: `${height}%` }} key={index} />)}</div><div className="week-labels"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div></> : <div className="empty-state"><Icon name="chart" size={21} /><strong>暂无本周数据</strong><span>完成一次诊断或学习任务后这里会显示统计。</span></div>}</article><article className="card recommend-card"><div className="card-heading"><span>今日推荐任务</span>{content.recommendation && <span className="status-pill success">最需要提升</span>}</div>{content.recommendation ? <><h2>{content.recommendation.title}</h2><div className="task-meta"><span><Icon name="clock" size={14} />预计用时 {content.recommendation.minutes} 分钟</span>{content.recommendation.difficulty ? <span>难度 {content.recommendation.difficulty}</span> : null}</div><button className="primary-button" onClick={() => goTo("plan")}>开始学习 <Icon name="arrow-right" size={16} /></button><div className="recommend-reason"><strong>为什么推荐</strong><p>{content.recommendation.reason}</p></div></> : <div className="empty-state"><Icon name="spark" size={21} /><strong>还没有推荐任务</strong><span>完成一次能力诊断后，系统会根据你的薄弱项推荐下一步。</span><button className="primary-button" onClick={startDiagnostic}>开始能力诊断 <Icon name="arrow-right" size={16} /></button></div>}</article><article className="card continue-card"><div className="card-heading"><span>继续学习</span><Icon name="spark" size={18} /></div><div className="target-icon"><Icon name="target" size={23} /></div><h2>{content.goal || "还没有学习目标"}</h2><p>{content.lastLearned ? `上次学习到：${content.lastLearned}` : "选好书籍与目标后，这里会显示你的学习进度。"}</p><button className="outline-button" onClick={() => goTo(content.goal ? "plan" : "goals")}>{content.goal ? "继续学习" : "去设定目标"}</button><button className="text-button" onClick={onOpenRecords}>查看学习记录 <Icon name="arrow-right" size={14} /></button></article></section><section className="dashboard-grid"><article className="card knowledge-card"><div className="card-heading"><div><span>能力图谱</span><small>当前学习目标关联的知识点</small></div><div className="legend"><span><i className="dot green" />掌握良好</span><span><i className="dot blue" />正在学习</span><span><i className="dot amber" />薄弱</span><span><i className="dot neutral" />未评估</span></div></div>{content.nodes.length > 0 ? <div className="knowledge-map"><div className="knowledge-core">{content.goal}</div>{content.nodes.map((node) => <div className={`knowledge-node ${node.tone}`} style={{ left: node.left, top: node.top }} key={node.label}>{node.label}</div>)}</div> : <div className="empty-state"><Icon name="target" size={21} /><strong>还没有该书的能力图谱</strong><span>完成一次能力诊断后，这里会显示每个知识点的掌握情况。</span><button className="outline-button" onClick={startDiagnostic}>开始能力诊断</button></div>}<button className="secondary-button" onClick={onOpenKnowledge} disabled={content.nodes.length === 0}>查看图谱详情 <Icon name="arrow-right" size={15} /></button></article><article className="card task-card"><div className="card-heading"><span>今日任务</span><span className="completion">{completed}/{tasks.length} 已完成</span></div>{tasks.length > 0 ? <div className="task-list">{tasks.map((task) => <TaskRow task={task} key={task.id} onOpen={() => onOpenTask(task)} />)}</div> : <div className="empty-state"><Icon name="calendar" size={21} /><strong>今天还没有任务</strong><span>完成诊断后系统会生成学习计划。</span></div>}<button className="secondary-button full" onClick={() => goTo("plan")}>查看完整计划 <Icon name="arrow-right" size={15} /></button></article></section></div>;
+  return <div className="page-stack"><PageHeader eyebrow="持续学习，循序提升" title="今日学习" description={headerDescription} /><section className="stat-grid"><article className="card progress-card"><div className="card-heading"><span>本周进度</span><Icon name="more" size={18} /></div>{hasWeekly ? <><div className="progress-content"><div className="ring-progress" style={{ "--progress": `${progressPercent}%` } as CSSProperties}><span>{progressPercent}<small>%</small></span></div><div className="progress-facts"><div><strong>{weekly?.completedTaskCount ?? 0}/{weekly?.totalTaskCount ?? 0}</strong><span>已完成任务</span></div><div><strong>{studyHours} h</strong><span>学习时长</span></div><div><strong>{accuracy}%</strong><span>正确率</span></div></div></div><div className="mini-bars" aria-label="本周学习时长趋势">{barHeights.map((height, index) => <i style={{ height: `${height}%` }} key={index} />)}</div><div className="week-labels"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div></> : <div className="empty-state"><Icon name="chart" size={21} /><strong>暂无本周数据</strong><span>生成学习计划并完成学习任务后，这里会显示统计。</span></div>}</article><article className="card recommend-card"><div className="card-heading"><span>今日推荐任务</span>{content.recommendation && <span className="status-pill success">最需要提升</span>}</div>{content.recommendation ? <><h2>{content.recommendation.title}</h2><div className="task-meta"><span><Icon name="clock" size={14} />预计用时 {content.recommendation.minutes} 分钟</span>{content.recommendation.difficulty ? <span>难度 {content.recommendation.difficulty}</span> : null}</div><button className="primary-button" onClick={() => goTo("plan")}>开始学习 <Icon name="arrow-right" size={16} /></button><div className="recommend-reason"><strong>为什么推荐</strong><p>{content.recommendation.reason}</p></div></> : <div className="empty-state"><Icon name="spark" size={21} /><strong>还没有推荐任务</strong><span>请先完成选书、学习目标和学习画像，系统会据此生成 7 天计划。</span><button className="primary-button" onClick={() => goTo("profile")}>完善学习画像 <Icon name="arrow-right" size={16} /></button></div>}</article><article className="card continue-card"><div className="card-heading"><span>继续学习</span><Icon name="spark" size={18} /></div><div className="target-icon"><Icon name="target" size={23} /></div><h2>{content.goal || "还没有学习目标"}</h2><p>{content.lastLearned ? `上次学习到：${content.lastLearned}` : "选好书籍与目标后，这里会显示你的学习进度。"}</p><button className="outline-button" onClick={() => goTo(content.goal ? "plan" : "goals")}>{content.goal ? "继续学习" : "去设定目标"}</button><button className="text-button" onClick={onOpenRecords}>查看学习记录 <Icon name="arrow-right" size={14} /></button></article></section><section className="dashboard-grid"><article className="card knowledge-card"><div className="card-heading"><div><span>能力图谱</span><small>当前学习目标关联的知识点</small></div><div className="legend"><span><i className="dot green" />掌握良好</span><span><i className="dot blue" />正在学习</span><span><i className="dot amber" />薄弱</span><span><i className="dot neutral" />未评估</span></div></div>{content.nodes.length > 0 ? <div className="knowledge-map"><div className="knowledge-core">{content.goal}</div>{content.nodes.map((node) => <div className={`knowledge-node ${node.tone}`} style={{ left: node.left, top: node.top }} key={node.label}>{node.label}</div>)}</div> : <div className="empty-state"><Icon name="target" size={21} /><strong>还没有该书的能力图谱</strong><span>每日诊断完成后，这里会显示更新后的掌握情况。</span><button className="outline-button" onClick={startDiagnostic}>开始今日诊断</button></div>}<button className="secondary-button" onClick={onOpenKnowledge} disabled={content.nodes.length === 0}>查看图谱详情 <Icon name="arrow-right" size={15} /></button></article><article className="card task-card"><div className="card-heading"><span>今日任务</span><span className="completion">{completed}/{tasks.length} 已完成</span></div>{tasks.length > 0 ? <div className="task-list">{tasks.map((task) => <TaskRow task={task} key={task.id} onOpen={() => onOpenTask(task)} />)}</div> : <div className="empty-state"><Icon name="calendar" size={21} /><strong>今天还没有任务</strong><span>请先完成选书、学习目标与学习画像以生成学习计划。</span></div>}<button className="secondary-button full" onClick={() => goTo("plan")}>查看完整计划 <Icon name="arrow-right" size={15} /></button></article></section></div>;
 }
 
-function DiagnosticView({ questions, index, answers, skippedQuestions, paused, busy, stage, result, calibration, calibrationReason, setAnswer, onPrevious, onSubmit, onSkip, onPause, onResume, onCalibration, onReason, onEvidence, onCalibrationSubmit }: { questions: DiagnosticQuestion[]; index: number; answers: Record<string, string>; skippedQuestions: string[]; paused: boolean; busy: boolean; stage: "question" | "result"; result: DiagnosticResult | null; calibration: Calibration | null; calibrationReason: string; setAnswer: (id: string) => void; onPrevious: () => void; onSubmit: () => void; onSkip: () => void; onPause: () => void; onResume: () => void; onCalibration: (value: Calibration) => void; onReason: (value: string) => void; onEvidence: () => void; onCalibrationSubmit: () => void }) {
-  if (stage === "result") return <DiagnosticResult result={result} calibration={calibration} reason={calibrationReason} busy={busy} onCalibration={onCalibration} onReason={onReason} onEvidence={onEvidence} onSubmit={onCalibrationSubmit} />;
+function DiagnosticView({ questions, index, answers, skippedQuestions, paused, busy, error, stage, result, calibration, calibrationReason, practice, setAnswer, onPrevious, onSubmit, onSkip, onPause, onResume, onCalibration, onReason, onEvidence, onCalibrationSubmit }: { questions: DiagnosticQuestion[]; index: number; answers: Record<string, string>; skippedQuestions: string[]; paused: boolean; busy: boolean; error: string | null; stage: "question" | "result"; result: DiagnosticResult | null; calibration: Calibration | null; calibrationReason: string; practice: boolean; setAnswer: (id: string) => void; onPrevious: () => void; onSubmit: () => void; onSkip: () => void; onPause: () => void; onResume: () => void; onCalibration: (value: Calibration) => void; onReason: (value: string) => void; onEvidence: () => void; onCalibrationSubmit: () => void }) {
+  if (stage === "result") return <DiagnosticResult result={result} calibration={calibration} reason={calibrationReason} busy={busy} practice={practice} onCalibration={onCalibration} onReason={onReason} onEvidence={onEvidence} onSubmit={onCalibrationSubmit} />;
+  if (busy && questions.length === 0) return <div className="page-stack narrow-page"><PageHeader eyebrow="诊断会话" title="正在加载题目" description="正在读取当天学习内容并准备诊断题目，请稍候。" /><article className="card diagnostic-loading-card" role="status" aria-live="polite"><div className="diagnostic-spinner" aria-hidden="true" /><strong>正在加载诊断题目…</strong><span>题目准备完成后会自动显示。</span></article></div>;
   const question = questions[index];
-  if (!question) return <div className="page-stack narrow-page"><PageHeader title="暂无诊断题目" description="后端当前没有返回可用的诊断题目。" /><article className="card empty-state"><p>请稍后重新开始诊断。</p></article></div>;
+  if (!question) return <div className="page-stack narrow-page"><PageHeader title={error ? "诊断启动失败" : "暂无诊断题目"} description={error ?? "后端当前没有返回可用的诊断题目。"} /><article className="card empty-state"><p>{error ? "请刷新页面并使用数据库账号重新登录后再试。" : "请稍后重新开始诊断。"}</p></article></div>;
   if (paused) return <div className="page-stack narrow-page"><PageHeader eyebrow="诊断已暂停" title="稍后继续诊断" description="已保存的答案不会丢失，回来后可以从当前题目继续。" /><article className="card pause-card"><div className="pause-icon"><Icon name="clock" size={25} /></div><h2>当前进度：第 {index + 1} / {questions.length} 题</h2><p>已完成 {Object.keys(answers).length} 题，跳过 {skippedQuestions.length} 题。</p><button className="primary-button" onClick={onResume}>继续诊断 <Icon name="arrow-right" size={16} /></button></article></div>;
   return <div className="page-stack narrow-page"><PageHeader eyebrow={`诊断会话 · 第 ${index + 1}/${questions.length} 题`} title="能力诊断" description="用少量题目了解当前基础，结果会生成可解释的学习建议。" action={<button className="text-button" onClick={onPause}><Icon name="clock" size={15} />暂时离开</button>} /><div className="diagnostic-progress"><span style={{ width: `${((index + 1) / questions.length) * 100}%` }} /><b>{index + 1} / {questions.length}</b></div><article className="card question-card"><div className="question-top"><span className="question-type">单选题</span><span className="question-tag">{question.tag}</span></div><h2>{question.title}</h2><div className="answer-list">{question.options.map((option) => <button className={`answer-option ${answers[question.id] === option.id ? "selected" : ""}`} key={option.id} onClick={() => setAnswer(option.id)}><span className="option-key">{option.id}</span><span>{option.text}</span>{answers[question.id] === option.id && <Icon name="check-circle" size={18} />}</button>)}</div><div className="question-actions"><div className="question-left-actions"><button className="text-button" disabled={index === 0 || busy} onClick={onPrevious}>上一题</button><button className="text-button" disabled={busy} onClick={onSkip}>跳过</button></div><button className="primary-button" disabled={busy} onClick={onSubmit}>{busy ? "正在保存…" : index === questions.length - 1 ? "提交诊断" : "提交并继续"} <Icon name="arrow-right" size={16} /></button></div></article><div className="info-banner"><Icon name="info" size={18} /><span>答案会逐题保存，诊断完成后可以查看判断依据。{skippedQuestions.length > 0 && ` 已跳过 ${skippedQuestions.length} 题。`}</span></div></div>;
 }
 
-function DiagnosticResult({ result, calibration, reason, busy, onCalibration, onReason, onEvidence, onSubmit }: { result: DiagnosticResult | null; calibration: Calibration | null; reason: string; busy: boolean; onCalibration: (value: Calibration) => void; onReason: (value: string) => void; onEvidence: () => void; onSubmit: () => void }) {
+function DiagnosticResult({ result, calibration, reason, busy, practice, onCalibration, onReason, onEvidence, onSubmit }: { result: DiagnosticResult | null; calibration: Calibration | null; reason: string; busy: boolean; practice: boolean; onCalibration: (value: Calibration) => void; onReason: (value: string) => void; onEvidence: () => void; onSubmit: () => void }) {
+  if (practice) return <div className="page-stack narrow-page"><PageHeader eyebrow="专项练习完成" title="练习结果" description="本次练习已完成，结果已记录，不会改变后续学习计划。" action={<span className="status-pill success"><Icon name="check" size={14} />已完成</span>} /><article className="card result-card"><div className="result-metrics"><div><strong>{result?.accuracy ?? "—"}</strong><span>正确率</span></div><div><strong>{result?.confidence ?? "—"}</strong><span>完成状态</span></div></div><div className="evidence-summary"><Icon name="info" size={16} /><div><strong>练习说明</strong><p>练习只记录答题表现，不更新掌握能力，也不会重新生成学习计划。</p></div></div><button className="primary-button full" disabled={busy} onClick={onSubmit}>{busy ? "正在保存…" : "完成练习"} <Icon name="arrow-right" size={16} /></button></article></div>;
   return <div className="page-stack"><PageHeader eyebrow="诊断完成" title="测评结果与校准" description="AI 判断和你的自我判断会分别保存，共同影响下一轮学习计划。" action={<span className="status-pill success"><Icon name="check" size={14} />已完成</span>} /><section className="result-grid"><article className="card result-card"><div className="card-heading"><span>AI 评估结果</span><Icon name="spark" size={18} /></div><div className="result-level"><span>能力水平</span><strong>{result?.level ?? "中等偏上"}</strong></div><div className="level-scale"><i style={{ left: "60%" }} /><span>薄弱</span><span>中等</span><span>优秀</span></div><div className="result-metrics"><div><strong>{result?.accuracy ?? "75%"}</strong><span>正确率</span></div><div><strong>{result?.confidence ?? "高"}</strong><span>置信度</span></div></div><div className="evidence-summary"><Icon name="file" size={16} /><div><strong>主要依据</strong><p>{result?.evidence ?? "题目作答结果以及关联知识点表现。"}</p></div></div><button className="secondary-button full" onClick={onEvidence}>查看全部依据 <Icon name="arrow-right" size={15} /></button></article><article className="card result-card calibration-card"><div className="card-heading"><span>用户校准</span><span className="status-pill blue">独立记录</span></div><p className="calibration-intro">你认为自己的真实水平是：</p><div className="calibration-options">{([ ["lower", "低于判断", "我还不太熟悉"], ["same", "基本符合", "这个判断比较准确"], ["higher", "高于判断", "我在其他场景用过"] ] as const).map(([key, title, description]) => <button className={`calibration-option ${calibration === key ? "selected" : ""}`} key={key} onClick={() => onCalibration(key)}><span className="radio-dot" /><div><strong>{title}</strong><small>{description}</small></div>{calibration === key && <Icon name="check-circle" size={18} />}</button>)}</div><label className="reason-input"><span>补充原因（可选）</span><textarea value={reason} onChange={(event) => onReason(event.target.value)} placeholder="例如：我在项目中使用过类似方法。" rows={3} /></label><button className="primary-button full" disabled={!calibration || busy} onClick={onSubmit}>{busy ? "正在提交…" : "提交校准并生成计划"} <Icon name="arrow-right" size={16} /></button></article></section></div>;
 }
 
@@ -879,13 +1006,15 @@ function PlanBudgetBlock({ budget }: { budget: PlanTimeBudget }) {
   );
 }
 
-function PlanView({ book, goal, goalLevel, tasks, advice, resources, timeBudget, tab, setTab, onOpenTask, onAdjustGoal, onOpenSource }: { book: { title: string; shortTitle: string }; goal: string; goalLevel: string; tasks: LearningTask[]; advice: string[]; resources: Source[]; timeBudget?: PlanTimeBudget; tab: "overview" | "knowledge"; setTab: (tab: "overview" | "knowledge") => void; onOpenTask: (task: LearningTask) => void; onAdjustGoal: () => void; onOpenSource: (source: Source) => void }) {
+function PlanView({ book, goal, goalLevel, tasks, dailyPlans, advice, resources, timeBudget, tab, setTab, onOpenTask, onAdjustGoal, onRegenerate, onOpenSource }: { book: { title: string; shortTitle: string }; goal: string; goalLevel: string; tasks: LearningTask[]; dailyPlans?: DailyLearningPlan[]; advice: string[]; resources: Source[]; timeBudget?: PlanTimeBudget; tab: "overview" | "knowledge"; setTab: (tab: "overview" | "knowledge") => void; onOpenTask: (task: LearningTask) => void; onAdjustGoal: () => void; onRegenerate: () => void; onOpenSource: (source: Source) => void }) {
   const completed = tasks.filter((task) => task.status === "completed").length;
+  const [expandedDay, setExpandedDay] = useState<string | null>(dailyPlans?.[0]?.date ?? null);
+  const days = dailyPlans ?? [];
   return <div className="page-stack">
-    <PageHeader eyebrow="学习闭环 · 目标到任务" title="学习计划" description={book.title} action={<button className="outline-button" onClick={onAdjustGoal}>调整目标</button>} />
+    <PageHeader eyebrow="学习闭环 · 目标到任务" title="学习计划" description={book.title} action={<div className="header-actions"><button className="outline-button" onClick={onAdjustGoal}>调整目标</button><button className="primary-button" onClick={onRegenerate}><Icon name="spark" size={15} />重新生成计划</button></div>} />
     <section className="plan-layout">
       <article className="card plan-summary"><span className="section-label">计划目标</span><h2>{goal}</h2><p>{goalLevel}</p><div className="ring-progress small" style={{ "--progress": `${tasks.length ? Math.round((completed / tasks.length) * 100) : 0}%` } as CSSProperties}><span>{tasks.length ? Math.round((completed / tasks.length) * 100) : 0}<small>%</small></span></div>{timeBudget && <PlanBudgetBlock budget={timeBudget} />}<button className="secondary-button full" onClick={onAdjustGoal}>调整目标</button></article>
-      <article className="card plan-table-card"><div className="plan-tabs"><button className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}>计划总览</button><button className={tab === "knowledge" ? "active" : ""} onClick={() => setTab("knowledge")}>知识点列表</button></div>{tab === "overview" ? <><div className="plan-table-head"><span>任务</span><span>状态</span><span>预计用时</span><span>推荐理由</span></div><div className="plan-table">{tasks.map((task) => <button className="plan-row plan-row-button" key={task.id} onClick={() => onOpenTask(task)}><div className="plan-task"><span className={`timeline-dot ${task.status}`} /><div><strong>{task.title}</strong><small>{task.type}{task.expectedCompletionDate ? ` · 排在 ${formatPlanDay(task.expectedCompletionDate)}` : ""}</small></div></div><span className={`status-pill ${task.status}`}>{statusLabels[task.status]}</span><span className="duration">{task.minutes ? `${task.minutes} 分钟` : "—"}</span><span className="reason">{task.reason}</span></button>)}</div></> : <div className="knowledge-list">{tasks.map((task) => <button className="knowledge-list-item" key={task.id} onClick={() => onOpenTask(task)}><span className="task-status in_progress"><Icon name="target" size={13} /></span><div><strong>{task.title}</strong><small>{task.description}</small></div><Icon name="chevron-right" size={16} /></button>)}</div>}</article>
+    <article className="card plan-table-card"><div className="plan-tabs"><button className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}>计划总览</button><button className={tab === "knowledge" ? "active" : ""} onClick={() => setTab("knowledge")}>知识点列表</button></div>{tab === "overview" ? <>{days.length > 0 ? <div className="plan-table daily-plan-list">{days.map((day, dayIndex) => { const open = expandedDay === day.date; const done = day.tasks.filter((task) => task.status === "completed").length; return <div className="daily-plan-group" key={day.date}><button className="plan-row plan-row-button daily-plan-row" onClick={() => setExpandedDay(open ? null : day.date)}><div className="plan-task"><span className={`timeline-dot ${done === day.tasks.length && day.tasks.length > 0 ? "completed" : "todo"}`} /><div><strong>第 {dayIndex + 1} 天学习计划</strong><small>{formatPlanDay(day.date)} · {day.tasks.length ? `${done}/${day.tasks.length} 项任务` : "正在准备当天任务"}</small></div></div><span className="status-pill">{done === day.tasks.length && day.tasks.length > 0 ? "已完成" : "待开始"}</span><span className="duration">{day.tasks.reduce((sum, task) => sum + task.minutes, 0) ? `${day.tasks.reduce((sum, task) => sum + task.minutes, 0)} 分钟` : "—"}</span><span className="reason">{day.reason}</span></button>{open && <div className="daily-plan-details">{day.tasks.length ? day.tasks.map((task) => <button className="plan-row plan-row-button" key={task.id} onClick={() => onOpenTask(task)}><div className="plan-task"><span className={`timeline-dot ${task.status}`} /><div><strong>{task.title}</strong><small>{task.type}</small></div></div><span className={`status-pill ${task.status}`}>{statusLabels[task.status]}</span><span className="duration">{task.minutes} 分钟</span><span className="reason">{task.reason}</span></button>) : <p>当天开始后，系统会先安排诊断，再生成后续学习任务。</p>}</div>}</div>; })}</div> : <div className="plan-table">{tasks.map((task) => <button className="plan-row plan-row-button" key={task.id} onClick={() => onOpenTask(task)}><div className="plan-task"><span className={`timeline-dot ${task.status}`} /><div><strong>{task.title}</strong><small>{task.type}{task.expectedCompletionDate ? ` · 排在 ${formatPlanDay(task.expectedCompletionDate)}` : ""}</small></div></div><span className={`status-pill ${task.status}`}>{statusLabels[task.status]}</span><span className="duration">{task.minutes ? `${task.minutes} 分钟` : "—"}</span><span className="reason">{task.reason}</span></button>)}</div>}</> : <div className="knowledge-list">{tasks.map((task) => <button className="knowledge-list-item" key={task.id} onClick={() => onOpenTask(task)}><span className="task-status in_progress"><Icon name="target" size={13} /></span><div><strong>{task.title}</strong><small>{task.description}</small></div><Icon name="chevron-right" size={16} /></button>)}</div>}</article>
     </section>
     <section className="plan-bottom-grid"><article className="card advice-card"><div className="card-heading"><span>学习建议</span><Icon name="spark" size={18} /></div>{advice.map((item, index) => index === 0 ? <p key={item}>{item}</p> : <div key={item}>{item}</div>)}</article><article className="card resources-card"><div className="card-heading"><span>推荐资料</span><Icon name="file" size={18} /></div>{resources.map((source) => <button key={source.id} onClick={() => onOpenSource(source)}><Icon name={source.type === "教材" ? "book" : "file"} size={16} /><span>{source.type} · {source.title}</span><Icon name="arrow-up-right" size={14} /></button>)}</article></section>
   </div>;
@@ -982,6 +1111,19 @@ function GoalEditor({ initialValue, onSave }: { initialValue: string; onSave: (v
 }
 
 function EmptyState({ text }: { text: string }) { return <div className="empty-state"><Icon name="file" size={21} /><strong>{text}</strong><span>调整筛选条件后可以继续查看。</span></div>; }
+
+function PlanGeneratingView() {
+  return <div className="plan-generating-view"><div className="plan-generating-icon"><Icon name="spark" size={26} /></div><h1>正在重新生成计划</h1><p>正在根据最新掌握度、学习目标和你的说明，重新安排未来 7 天计划。</p><div className="plan-generating-steps"><span>分析掌握度</span><span>安排每日任务</span><span>准备诊断题与阅读材料</span></div><div className="loading-bar"><i /></div><small>此过程可能需要一些时间，请不要关闭页面。</small></div>;
+}
+
+function RegeneratePlanForm({ onConfirm }: { onConfirm: (reason: string) => void }) {
+  const [reason, setReason] = useState("");
+  return <div className="regenerate-plan-form">
+    <p>系统会根据最新掌握度、学习目标和你的说明，重新安排未来 7 天的学习内容。</p>
+    <label className="control-field"><span>重新生成原因（可选）</span><textarea value={reason} onChange={(event) => setReason(event.target.value)} placeholder="例如：最近时间变少，希望每天任务更轻；或想加强回归模型。" rows={4} maxLength={1000} /></label>
+    <button className="primary-button full" onClick={() => onConfirm(reason.trim())}>确认重新生成 <Icon name="arrow-right" size={16} /></button>
+  </div>;
+}
 
 function Modal({ modal, onClose }: { modal: ModalState; onClose: () => void }) {
   return <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title"><div className="modal-header"><div><span className="eyebrow">操作详情</span><h2 id="modal-title">{modal.title}</h2>{modal.subtitle && <p>{modal.subtitle}</p>}</div><button className="icon-button" onClick={onClose} aria-label="关闭"><Icon name="close" size={18} /></button></div><div className="modal-content">{modal.content}</div><div className="modal-actions">{modal.secondary && <button className="outline-button" onClick={modal.secondary.onClick}>{modal.secondary.label}</button>}{modal.primary && <button className="primary-button" disabled={modal.primary.disabled} onClick={modal.primary.onClick}>{modal.primary.label}</button>}</div></section></div>;

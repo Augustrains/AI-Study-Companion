@@ -54,6 +54,32 @@ class MaterialQaWorkflow:
         if callable(close):
             close()
 
+    def rebuild_material_index(self, *, book_ids: list[str] | None = None) -> list[dict[str, object]]:
+        rebuild = getattr(self.retriever, "rebuild", None)
+        if not callable(rebuild):
+            raise RuntimeError("the configured material retriever does not support index rebuilding")
+        return rebuild(book_ids=book_ids)
+
+    def review_material_document(
+        self,
+        *,
+        book_id: str,
+        content_unit_id: str,
+        status: str,
+        reviewer: str,
+        reason: str = "",
+    ) -> dict[str, object]:
+        review = getattr(self.retriever, "review_unit", None)
+        if not callable(review):
+            raise RuntimeError("the configured material retriever does not support material review")
+        return review(
+            book_id=book_id,
+            content_unit_id=content_unit_id,
+            status=status,
+            reviewer=reviewer,
+            reason=reason,
+        )
+
     def create_conversation(
         self,
         *,

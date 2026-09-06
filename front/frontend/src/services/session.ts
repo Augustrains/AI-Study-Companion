@@ -70,6 +70,13 @@ export function getSession(): AuthSession | null {
   try {
     const raw = window.localStorage.getItem(SESSION_KEY);
     memorySession = raw ? (JSON.parse(raw) as AuthSession) : null;
+    // 认证 API 已接入 MySQL 后，旧版本留下的 local_xxx 会话没有对应的
+    // users.user_id。继续使用会让画像/目标/计划始终查不到同一位用户的数据。
+    // 主动清理一次，要求用户用数据库账号重新登录以取得真实数字 ID。
+    if (USE_REAL_API && memorySession?.token.startsWith("local.")) {
+      memorySession = null;
+      window.localStorage.removeItem(SESSION_KEY);
+    }
   } catch {
     memorySession = null;
   }
@@ -91,7 +98,11 @@ function saveSession(session: AuthSession | null) {
  * 未登录时回退到该默认值，保证既有演示数据仍可访问。
  */
 export function getCurrentUserId(): string {
-  return getSession()?.user.userId ?? "user_001";
+  const id = getSession()?.user.userId;
+  // Legacy demo sessions used ``user_001`` while MySQL APIs use numeric IDs.
+  // Map that seed account instead of sending NaN in plan requests.
+  if (!id || id === "user_001") return "1";
+  return id;
 }
 
 export function getCurrentUser(): AuthUser | null {

@@ -20,7 +20,7 @@ def build_router(module: LearningPlanModule) -> APIRouter:
 
     @router.post("/weekly/generate", response_model=WeeklyLearningPlanResponse)
     def generate_weekly_learning_plan(payload: GenerateWeeklyLearningPlanRequest) -> dict[str, Any]:
-        return module.generate_weekly(user_id=payload.user_id, book_id=payload.book_id, start_date=payload.start_date)
+        return module.generate_weekly(user_id=payload.user_id, book_id=payload.book_id, start_date=payload.start_date, reason=payload.reason)
 
     @router.get("/weekly/materials")
     def get_reading_materials(book_id: int = Query(..., alias="bookId", gt=0), item_title: str = Query(..., alias="itemTitle", min_length=1, max_length=300)) -> dict[str, Any]:

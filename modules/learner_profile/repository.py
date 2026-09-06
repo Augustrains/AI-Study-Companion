@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import json
 from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Iterator
@@ -14,7 +15,19 @@ from modules.common.errors import ConfigurationError, ValidationAppError
 
 class MySqlLearnerProfileRepository:
     def __init__(self, *, host: str, port: int, database: str, user: str, password: str) -> None:
-        self.config = {"host": host, "port": port, "database": database, "user": user, "password": password, "charset": "utf8mb4"}
+        # mysql-connector's C extension currently raises an unhelpful
+        # ``RuntimeError: Failed raising error`` under this Python runtime.
+        # The pure-Python implementation connects to the same server reliably.
+        self.config = {
+            "host": host,
+            "port": port,
+            "database": database,
+            "user": user,
+            "password": password,
+            "charset": "utf8mb4",
+            "use_pure": True,
+            "connection_timeout": 10,
+        }
 
     @classmethod
     def from_env(cls) -> "MySqlLearnerProfileRepository":
@@ -60,7 +73,7 @@ class MySqlLearnerProfileRepository:
     def load(self, user_id: int, book_id: int) -> dict[str, Any] | None:
         with self.connection() as connection:
             cursor = connection.cursor(dictionary=True)
-            profile = self._one(cursor, "SELECT background, preferred_content_style FROM learner_profile WHERE user_id = %s ORDER BY updated_at DESC, id DESC LIMIT 1", (user_id,))
+            profile = self._one(cursor, "SELECT background, preferred_content_style, self_assessed_level, current_confusions, additional_requirements, preferred_activity_types, session_duration_minutes FROM learner_profile WHERE user_id = %s ORDER BY updated_at DESC, id DESC LIMIT 1", (user_id,))
             goal = self._one(cursor, "SELECT id, goal, aim_level, daily_minutes, start_date, target_date, status FROM learning_goal WHERE user_id = %s AND book_id = %s ORDER BY status ASC, updated_at DESC, id DESC LIMIT 1", (user_id, book_id))
             if profile is None and goal is None:
                 return None
@@ -68,7 +81,25 @@ class MySqlLearnerProfileRepository:
             if goal is not None:
                 cursor.execute("SELECT kpm.knowledge_point_id, kp.name, kpm.mastery_score, kpm.aim_score, kpm.confidence, kpm.next_review_at, GREATEST(kpm.aim_score - kpm.mastery_score, 0) AS gap_score FROM knowledge_point_master kpm JOIN knowledge_points kp ON kp.id = kpm.knowledge_point_id WHERE kpm.user_id = %s AND kpm.goal_id = %s ORDER BY kp.course_order, kp.id", (user_id, goal["id"]))
                 mastery = list(cursor.fetchall())
-            return {"user_id": user_id, "book_id": book_id, "background": (profile or {}).get("background", ""), "preferred_content_style": (profile or {}).get("preferred_content_style", "balanced"), "goal": goal, "mastery": mastery}
+            activities = (profile or {}).get("preferred_activity_types") or []
+            if isinstance(activities, str):
+                try:
+                    activities = json.loads(activities)
+                except json.JSONDecodeError:
+                    activities = []
+            return {
+                "user_id": user_id,
+                "book_id": book_id,
+                "background": (profile or {}).get("background", ""),
+                "preferred_content_style": (profile or {}).get("preferred_content_style", "balanced"),
+                "self_assessed_level": (profile or {}).get("self_assessed_level") or "unknown",
+                "current_confusions": (profile or {}).get("current_confusions") or "",
+                "additional_requirements": (profile or {}).get("additional_requirements") or "",
+                "preferred_activity_types": activities if isinstance(activities, list) else [],
+                "session_duration_minutes": (profile or {}).get("session_duration_minutes"),
+                "goal": goal,
+                "mastery": mastery,
+            }
 
     def save(self, payload: dict[str, Any], point_scores: dict[int, dict[str, float]]) -> dict[str, Any]:
         user_id, book_id = int(payload["user_id"]), int(payload["book_id"])
@@ -80,10 +111,19 @@ class MySqlLearnerProfileRepository:
             if self._one(cursor, "SELECT id FROM books WHERE id = %s", (book_id,)) is None:
                 raise ValidationAppError("book_id does not exist", details={"book_id": book_id})
             profile = self._one(cursor, "SELECT id FROM learner_profile WHERE user_id = %s ORDER BY updated_at DESC, id DESC LIMIT 1", (user_id,))
+            profile_values = (
+                payload["background"],
+                payload["preferred_content_style"],
+                payload.get("self_assessed_level") or "unknown",
+                payload.get("current_confusions") or "",
+                payload.get("additional_requirements") or "",
+                json.dumps(list(payload.get("preferred_activity_types") or []), ensure_ascii=False),
+                payload.get("session_duration_minutes"),
+            )
             if profile:
-                cursor.execute("UPDATE learner_profile SET background = %s, preferred_content_style = %s, updated_at = %s WHERE id = %s", (payload["background"], payload["preferred_content_style"], now, profile["id"]))
+                cursor.execute("UPDATE learner_profile SET background = %s, preferred_content_style = %s, self_assessed_level = %s, current_confusions = %s, additional_requirements = %s, preferred_activity_types = %s, session_duration_minutes = %s, updated_at = %s WHERE id = %s", (*profile_values, now, profile["id"]))
             else:
-                cursor.execute("INSERT INTO learner_profile (id, user_id, background, preferred_content_style, created_at, updated_at) VALUES (UUID_SHORT(), %s, %s, %s, %s, %s)", (user_id, payload["background"], payload["preferred_content_style"], now, now))
+                cursor.execute("INSERT INTO learner_profile (id, user_id, background, preferred_content_style, self_assessed_level, current_confusions, additional_requirements, preferred_activity_types, session_duration_minutes, created_at, updated_at) VALUES (UUID_SHORT(), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)", (user_id, *profile_values, now, now))
             goal = self._one(cursor, "SELECT id FROM learning_goal WHERE user_id = %s AND book_id = %s AND status = 0 ORDER BY updated_at DESC, id DESC LIMIT 1", (user_id, book_id))
             values = (payload["goal"], payload["aim_level"], payload["daily_minutes"], payload.get("start_date"), payload.get("target_date"), now)
             if goal:
