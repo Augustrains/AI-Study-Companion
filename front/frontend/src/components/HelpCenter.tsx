@@ -228,3 +228,4 @@ export function HelpCenterView({ onNavigate }: { onNavigate: (nav: NavKey) => vo
     </div>
   );
 }
+

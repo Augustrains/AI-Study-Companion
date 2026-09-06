@@ -148,3 +148,4 @@ export function CommunityView({ userId, nickname, course }: { userId: string; ni
     {dialog && typeof dialog === "object" && <CommunityDialog title="学习伙伴" onClose={() => setDialog(null)}><div className="community-profile-detail"><Avatar name={dialog.name} color={dialog.color} large /><h3>{dialog.name}</h3><p>{dialog.role}</p><span className="community-category">{dialog.course}</span><p className="community-profile-bio">{dialog.bio}</p><dl><div><dt>学习目标</dt><dd>{dialog.goal}</dd></div><div><dt>学习时间</dt><dd>{dialog.time}</dd></div><div><dt>交流偏好</dt><dd>{dialog.tags.join(" · ")}</dd></div></dl><button className="primary-button" aria-pressed={state.followedIds.includes(dialog.id)} onClick={() => toggleFollow(dialog)}><Icon name={state.followedIds.includes(dialog.id) ? "check" : "plus"} size={16} />{state.followedIds.includes(dialog.id) ? "已关注 · 取消关注" : "关注这位伙伴"}</button></div></CommunityDialog>}
   </section>;
 }
+

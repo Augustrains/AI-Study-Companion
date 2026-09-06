@@ -16,9 +16,10 @@
     "@tailwindcss/vite": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
-    "@vitejs/plugin-react": "4.3.4",
+    "@vitejs/plugin-react": "latest",
     "tailwindcss": "latest",
     "typescript": "latest",
-    "vite": "6.2.0"
+    "vite": "latest"
   }
 }
+

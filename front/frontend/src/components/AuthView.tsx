@@ -228,3 +228,4 @@ export function AuthView({ onAuthenticated }: { onAuthenticated: (session: AuthS
     </div>
   );
 }
+

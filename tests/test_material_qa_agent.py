@@ -14,13 +14,43 @@ class RecordingLLMClient:
     def __init__(self, answer: str = '{"refused": false, "answer": "模型回答"}') -> None:
         self.answer = answer
         self.prompt = ""
+        self.image_urls: list[str] = []
 
     def generate(self, prompt: str) -> str:
         self.prompt = prompt
         return self.answer
 
+    def generate_multimodal(self, prompt: str, *, image_urls: list[str]) -> str:
+        self.prompt = prompt
+        self.image_urls = image_urls
+        return self.answer
+
 
 class MaterialQaAgentTest(unittest.TestCase):
+    def test_image_and_text_use_one_multimodal_request(self):
+        from modules.material_qa.models import MaterialQaAttachment
+
+        client = RecordingLLMClient()
+        agent_input = MaterialQaAgentInput(
+            history=[],
+            current_question="请解释这张图",
+            retrieval=MaterialQaRetrievalResult(chunks=[]),
+            attachments=[MaterialQaAttachment(
+                id=1,
+                message_id=10,
+                file_name="cnn.png",
+                file_type="image/png",
+                file_size=100,
+                file_url="https://example.invalid/cnn.png",
+            )],
+        )
+
+        output = MaterialQaAgent(client).generate(agent_input)
+
+        self.assertFalse(output.refused)
+        self.assertEqual(client.image_urls, ["https://example.invalid/cnn.png"])
+        self.assertIn("请解释这张图", client.prompt)
+        self.assertIn("cnn.png", client.prompt)
     def test_generate_calls_llm_with_history_question_and_retrieval(self):
         client = RecordingLLMClient()
         source = MaterialQaSource(

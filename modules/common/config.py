@@ -66,6 +66,13 @@ class Settings:
     db_name: str = ""
     db_user: str = ""
     db_password: str = ""
+    # Alibaba Cloud OSS configuration for material-QA attachments.
+    oss_endpoint: str = ""
+    oss_region: str = ""
+    oss_bucket: str = ""
+    oss_prefix: str = "material-qa"
+    oss_access_key_id: str = ""
+    oss_access_key_secret: str = ""
 
     @property
     def question_new_dir(self) -> Path:
@@ -105,24 +112,30 @@ class Settings:
         当前 common 包的位置推导项目根目录。
         """
         root = Path(project_dir or Path(__file__).resolve().parents[2]).resolve()
-        load_dotenv(root / ".env", override=False)
-        data_dir = Path(os.getenv("STUDY_COMPANION_DATA_DIR", root / "data")).resolve()
-        return cls(root, data_dir, os.getenv("STUDY_COMPANION_HOST", "127.0.0.1"), _int("STUDY_COMPANION_BACKEND_PORT", 8001), _int("STUDY_COMPANION_FRONTEND_PORT", 5173), os.getenv("STUDY_COMPANION_LOG_LEVEL", "INFO").upper(), _bool("STUDY_COMPANION_USE_REAL_API", True), _bool("STUDY_COMPANION_STORAGE_BACKUP", True))
-        # 允许从项目根目录 .env 读取配置；显式系统环境变量优先。
+        # Relative loading keeps Windows workspaces with non-ASCII path names
+        # usable when the interpreter cannot round-trip the absolute path.
+        if project_dir is None:
+            load_dotenv(".env", override=False)
         load_dotenv(root / ".env", override=False)
         data_dir = Path(os.getenv("STUDY_COMPANION_DATA_DIR", root / "data")).resolve()
         return cls(
-            root,
-            data_dir,
-            os.getenv("STUDY_COMPANION_HOST", "127.0.0.1"),
-            _int("STUDY_COMPANION_BACKEND_PORT", 8000),
-            _int("STUDY_COMPANION_FRONTEND_PORT", 5173),
-            os.getenv("STUDY_COMPANION_LOG_LEVEL", "INFO").upper(),
-            _bool("STUDY_COMPANION_USE_REAL_API", True),
-            _bool("STUDY_COMPANION_STORAGE_BACKUP", True),
-            os.getenv("STUDY_COMPANION_DB_HOST", ""),
-            _int("STUDY_COMPANION_DB_PORT", 3306),
-            os.getenv("STUDY_COMPANION_DB_NAME", ""),
-            os.getenv("STUDY_COMPANION_DB_USER", ""),
-            os.getenv("STUDY_COMPANION_DB_PASSWORD", ""),
+            project_dir=root,
+            data_dir=data_dir,
+            host=os.getenv("STUDY_COMPANION_HOST", "127.0.0.1"),
+            backend_port=_int("STUDY_COMPANION_BACKEND_PORT", 8001),
+            frontend_port=_int("STUDY_COMPANION_FRONTEND_PORT", 5173),
+            log_level=os.getenv("STUDY_COMPANION_LOG_LEVEL", "INFO").upper(),
+            use_real_api=_bool("STUDY_COMPANION_USE_REAL_API", True),
+            storage_backup=_bool("STUDY_COMPANION_STORAGE_BACKUP", True),
+            db_host=os.getenv("STUDY_COMPANION_DB_HOST", ""),
+            db_port=_int("STUDY_COMPANION_DB_PORT", 3306),
+            db_name=os.getenv("STUDY_COMPANION_DB_NAME", ""),
+            db_user=os.getenv("STUDY_COMPANION_DB_USER", ""),
+            db_password=os.getenv("STUDY_COMPANION_DB_PASSWORD", ""),
+            oss_endpoint=os.getenv("STUDY_COMPANION_OSS_ENDPOINT", ""),
+            oss_region=os.getenv("STUDY_COMPANION_OSS_REGION", ""),
+            oss_bucket=os.getenv("STUDY_COMPANION_OSS_BUCKET", ""),
+            oss_prefix=os.getenv("STUDY_COMPANION_OSS_PREFIX", "material-qa").strip("/"),
+            oss_access_key_id=os.getenv("OSS_ACCESS_KEY_ID", ""),
+            oss_access_key_secret=os.getenv("OSS_ACCESS_KEY_SECRET", ""),
         )

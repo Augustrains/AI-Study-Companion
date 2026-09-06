@@ -181,3 +181,4 @@ export function LearningResourcesView({ knowledgePointNames }: { knowledgePointN
     </div>
   );
 }
+

@@ -24,7 +24,7 @@ from .schemas import MaterialQaSource
 
 MessageRole = Literal["user", "assistant", "system"]
 
-
+# 消息仓储的接口，适配不同实现
 class MaterialQaMessageStore(Protocol):
     """Storage operations required by the material-QA workflow."""
 

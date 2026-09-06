@@ -1,7 +1,7 @@
-export type IconName = "home" | "target" | "calendar" | "chart" | "chat" | "user" | "settings" | "help" | "book-open" | "book" | "lock" | "chevron-down" | "chevron-right" | "arrow-right" | "arrow-up-right" | "check" | "check-circle" | "clock" | "spark" | "file" | "send" | "info" | "filter" | "plus" | "more" | "close" | "alert" | "shield" | "bell" | "download" | "trash" | "log-out";
-export type IconName = "home" | "target" | "calendar" | "chart" | "chat" | "user" | "settings" | "help" | "book-open" | "book" | "chevron-down" | "chevron-right" | "arrow-right" | "arrow-up-right" | "check" | "check-circle" | "clock" | "spark" | "file" | "send" | "info" | "filter" | "plus" | "more" | "close" | "alert" | "shield" | "bell" | "download" | "trash" | "log-out" | "lock" | "users" | "heart" | "bookmark" | "search";
+export type IconName = "home" | "target" | "calendar" | "chart" | "chat" | "user" | "settings" | "help" | "book-open" | "book" | "chevron-down" | "chevron-right" | "arrow-right" | "arrow-up-right" | "check" | "check-circle" | "clock" | "spark" | "file" | "send" | "info" | "filter" | "plus" | "more" | "close" | "alert" | "shield" | "bell" | "download" | "trash" | "log-out" | "lock" | "users" | "heart" | "bookmark" | "search" | "trophy";
 
 const paths: Record<IconName, string> = {
+  trophy: "M8 21h8M12 17v4M7 4h10v4a5 5 0 0 1-10 0V4Zm0 2H4v1a4 4 0 0 0 4 4m9-5h3v1a4 4 0 0 1-4 4",
   users: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm8-7a4 4 0 0 1 0 8m5 9v-2a4 4 0 0 0-3-3.87",
   heart: "M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 0 0 0-7.8Z",
   bookmark: "M6 3h12v18l-6-4-6 4V3Z",
@@ -16,7 +16,6 @@ const paths: Record<IconName, string> = {
   help: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm-1-6h2m-2-2.5c0-1.7 2.5-1.7 2.5-3.4A2.5 2.5 0 0 0 8.9 8.2",
   "book-open": "M3 5.5A2.5 2.5 0 0 1 5.5 3H11v16H5.5A2.5 2.5 0 0 0 3 21V5.5Zm18 0A2.5 2.5 0 0 0 18.5 3H13v16h5.5A2.5 2.5 0 0 1 21 21V5.5Z",
   book: "M5 4h12a2 2 0 0 1 2 2v14H7a2 2 0 0 0-2 2V4Zm0 0a2 2 0 0 0-2 2v14a2 2 0 0 1 2-2h14",
-  lock: "M7 11V8a5 5 0 0 1 10 0v3m-11 0h12v10H6V11Zm6 4v2",
   "chevron-down": "m6 9 6 6 6-6",
   "chevron-right": "m9 6 6 6-6 6",
   "arrow-right": "M4 12h16m-6-6 6 6-6 6",
@@ -38,6 +37,7 @@ const paths: Record<IconName, string> = {
   download: "M12 3v12m0 0-4.5-4.5M12 15l4.5-4.5M4 20h16",
   trash: "M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13",
   "log-out": "M15 12H4m11 0-3.5-3.5M15 12l-3.5 3.5M9 4h9a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H9",
+  lock: "M6 11h12v9H6v-9Zm2.5 0V7.5a3.5 3.5 0 1 1 7 0V11",
 };
 
 export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {

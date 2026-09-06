@@ -87,3 +87,18 @@ class AskMaterialQuestionResponse(BaseModel):
     socratic_state: str | None = Field(default=None, alias="socraticState")
     response_quality: str | None = Field(default=None, alias="responseQuality")
     socratic_completed: bool = Field(default=False, alias="socraticCompleted")
+    user_message_id: int | None = Field(default=None, alias="userMessageId")
+
+
+class MaterialQaAttachmentResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: int
+    message_id: int = Field(alias="messageId")
+    file_name: str = Field(alias="fileName")
+    file_type: str = Field(alias="fileType")
+    file_size: int = Field(alias="fileSize")
+    file_url: str = Field(alias="fileUrl")
+    created_at: str = Field(alias="createdAt")
+    updated_at: str = Field(alias="updatedAt")
+

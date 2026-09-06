@@ -40,6 +40,26 @@ class DeepSeekLLMClientTest(unittest.TestCase):
         response.raise_for_status.assert_called_once_with()
 
     @patch("sdk.llm_client.httpx.Client")
+    def test_generate_multimodal_sends_text_and_image_in_one_request(self, mock_client_class):
+        response = MagicMock()
+        response.json.return_value = {"choices": [{"message": {"content": "回答"}}]}
+        client = mock_client_class.return_value.__enter__.return_value
+        client.post.return_value = response
+        llm = DeepSeekLLMClient(api_key="secret")
+
+        result = llm.generate_multimodal(
+            "解释图片",
+            image_urls=["https://example.invalid/cnn.png"],
+        )
+
+        self.assertEqual(result, "回答")
+        payload = client.post.call_args.kwargs["json"]
+        self.assertEqual(payload["messages"][0]["content"], [
+            {"type": "text", "text": "解释图片"},
+            {"type": "image_url", "image_url": {"url": "https://example.invalid/cnn.png"}},
+        ])
+
+    @patch("sdk.llm_client.httpx.Client")
     def test_http_error_is_converted_to_external_service_error(self, mock_client_class):
         request = httpx.Request("POST", "https://opencode.ai/zen/go/v1/chat/completions")
         error_response = httpx.Response(401, request=request)

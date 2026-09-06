@@ -238,3 +238,4 @@ export function GoalsSetupView({
     </div>
   );
 }
+

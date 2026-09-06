@@ -28,3 +28,4 @@ export const communityGroups = [
   { id: "group-python", name: "Python实操同行", detail: "小项目起步 · 一起动手", icon: "file", color: "mint" },
   { id: "group-dl", name: "深度学习研习室", detail: "从计算图到神经网络", icon: "spark", color: "violet" },
 ] as const;
+
