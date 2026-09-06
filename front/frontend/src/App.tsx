@@ -178,6 +178,8 @@ function App() {
   const [generatedPlan, setGeneratedPlan] = useState<LearningPlanResult | null>(null);
   const [planRegenerating, setPlanRegenerating] = useState(false);
   const [todayLearning, setTodayLearning] = useState<TodayLearningResponse | null>(null);
+  // 今日页不能用空数据作为加载中的占位，否则会先渲染本地兜底内容再替换为真实数据。
+  const [todayLearningLoading, setTodayLearningLoading] = useState(true);
   const [planTab, setPlanTab] = useState<"overview" | "knowledge">("overview");
   const [goalLevel, setGoalLevel] = useState("能够独立完成基础练习");
 
@@ -395,6 +397,7 @@ function App() {
 
   // 拉取今日学习聚合数据；任务状态变化后需要重新调用，否则页面停留在旧状态。
   const reloadTodayLearning = async (targetBookId: BookId = bookId) => {
+    setTodayLearningLoading(true);
     try {
       const result = await api.getTodayLearning(targetBookId);
       setTodayLearning(result);
@@ -406,6 +409,8 @@ function App() {
       });
     } catch {
       // 保留当前展示内容，避免刷新失败时页面变空。
+    } finally {
+      setTodayLearningLoading(false);
     }
   };
 
@@ -413,10 +418,13 @@ function App() {
     if (!user) return;
     let active = true;
     setTodayLearning(null);
+    setTodayLearningLoading(true);
     void api.getTodayLearning(bookId).then((result) => {
       if (active) setTodayLearning(result);
     }).catch(() => {
       if (active) setTodayLearning(null);
+    }).finally(() => {
+      if (active) setTodayLearningLoading(false);
     });
     return () => { active = false; };
   }, [user?.userId, bookId]);
@@ -628,6 +636,15 @@ function App() {
         showToast(skipped ? "已跳过当前题" : "答案已保存", `进入第 ${diagnosticIndex + 2} 题。`);
       }
     } catch (error) {
+      const apiError = error as ApiError;
+      // 后端重启、旧版缓存或跨标签页切换都可能让浏览器保留一个已失效
+      // 的诊断 ID。不能让用户反复提交同一个不存在的会话。
+      if (apiError?.code === "RESOURCE_NOT_FOUND" && String(apiError?.message ?? "").startsWith("diagnosis not found:")) {
+        clearSavedDiagnostic(user?.userId, bookId);
+        await startDiagnostic(practiceTask ?? undefined);
+        showToast("诊断会话已更新", "旧会话已失效，已为你创建新的诊断，请重新选择当前题答案。 ");
+        return;
+      }
       showToast("提交失败", errorMessage(error));
     } finally {
       setDiagnosticBusy(false);
@@ -1084,7 +1101,7 @@ function App() {
         <div className="page-content" ref={pageContentRef} role="region" aria-label="页面内容" tabIndex={0}>
         <header className="topbar"><div className="mobile-brand"><div className="brand-mark"><Icon name="book-open" size={20} /></div></div><div className="topbar-context"><span className="context-label">当前学习内容</span><label className="book-select"><Icon name="book" size={18} /><select value={bookId} onChange={(event) => resetBookState(event.target.value as BookId)} aria-label="选择当前学习内容">{bookOptions.map((book) => <option key={book.id} value={book.id}>{book.title}</option>)}</select><Icon name="chevron-down" size={15} /></label></div></header>
         <div className="page-body">
-        {activeNav === "today" && <TodayView book={currentBook} content={content} tasks={currentTasks} dashboard={todayDashboard} goTo={goTo} startDiagnostic={startDiagnostic} onOpenTask={openTask} onOpenKnowledge={openKnowledgeDetail} onOpenRecords={() => goTo("records")} />}
+        {activeNav === "today" && <TodayView book={currentBook} content={content} tasks={currentTasks} dashboard={todayDashboard} loading={todayLearningLoading} goTo={goTo} startDiagnostic={startDiagnostic} onOpenTask={openTask} onOpenKnowledge={openKnowledgeDetail} onOpenRecords={() => goTo("records")} />}
         {activeNav === "profile" && <LearnerProfileView bookId={bookId} onNotice={showToast} onProfileSaved={ensureWeeklyPlan} />}
         {activeNav === "diagnostic" && <DiagnosticView questions={diagnosticQuestions} index={diagnosticIndex} answers={diagnosticAnswers} skippedQuestions={skippedQuestions} paused={diagnosticPaused} busy={diagnosticBusy} error={diagnosticError} stage={diagnosticStage} result={diagnosticResult} calibration={calibration} calibrationReason={calibrationReason} practice={Boolean(practiceTask)} setAnswer={(id) => currentQuestion && setDiagnosticAnswers((answers) => ({ ...answers, [currentQuestion.id]: id }))} onPrevious={() => setDiagnosticIndex((index) => Math.max(0, index - 1))} onSubmit={submitDiagnostic} onSkip={skipDiagnostic} onPause={() => setDiagnosticPaused(true)} onResume={resumeDiagnostic} onCalibration={setCalibration} onReason={setCalibrationReason} onEvidence={openEvidence} onCalibrationSubmit={submitCalibration} onAiHelp={openDiagnosticAiHelp} />}
         {activeNav === "plan" && (planRegenerating ? <PlanGeneratingView /> : generatedPlan ? <PlanView book={generatedPlan.book} goal={generatedPlan.goal} goalLevel={goalLevel || generatedPlan.goalLevel} tasks={generatedPlan.tasks.map((task) => ({ ...task, status: taskStates[task.id] ?? task.status }))} dailyPlans={generatedPlan.dailyPlans?.map((day) => ({ ...day, tasks: day.tasks.map((task) => ({ ...task, status: taskStates[task.id] ?? task.status })) }))} advice={generatedPlan.advice} resources={generatedPlan.resources} timeBudget={generatedPlan.timeBudget} tab={planTab} setTab={setPlanTab} onOpenTask={openTask} onAdjustPlan={openPlanAdjustment} onOpenSource={openSource} /> : <PlanEmptyView onGenerate={() => void ensureWeeklyPlan(bookId)} onOpenProfile={() => setActiveNav("profile")} />)}
@@ -1120,7 +1137,8 @@ function PlanEmptyView({ onGenerate, onOpenProfile }: { onGenerate: () => void; 
   return <div className="page-stack"><PageHeader eyebrow="学习闭环 · 目标到任务" title="学习计划" description="学习画像已建立后即可生成未来 7 天的学习计划；每日诊断只负责动态调整后续任务。" /><article className="card empty-state"><Icon name="calendar" size={21} /><strong>暂时没有学习计划</strong><span>如果你已完成学习画像，直接生成计划即可；否则请先补充画像。</span><div className="button-row"><button className="primary-button" onClick={onGenerate}>生成 7 天学习计划</button><button className="outline-button" onClick={onOpenProfile}>查看学习画像</button></div></article></div>;
 }
 
-function TodayView({ book, content, tasks, dashboard, goTo, startDiagnostic, onOpenTask, onOpenKnowledge, onOpenRecords }: { book: Book; content: ReturnType<typeof getBookContent>; tasks: LearningTask[]; dashboard: TodayLearningResponse | null; goTo: (key: NavKey) => void; startDiagnostic: () => void; onOpenTask: (task: LearningTask) => void; onOpenKnowledge: () => void; onOpenRecords: () => void }) {
+function TodayView({ book, content, tasks, dashboard, loading, goTo, startDiagnostic, onOpenTask, onOpenKnowledge, onOpenRecords }: { book: Book; content: ReturnType<typeof getBookContent>; tasks: LearningTask[]; dashboard: TodayLearningResponse | null; loading: boolean; goTo: (key: NavKey) => void; startDiagnostic: () => void; onOpenTask: (task: LearningTask) => void; onOpenKnowledge: () => void; onOpenRecords: () => void }) {
+  if (loading) return <div className="page-stack"><PageHeader eyebrow="持续学习，循序提升" title="今日学习" description="正在读取你的今日任务与学习进度。" /><article className="card today-loading-card" role="status" aria-live="polite"><div className="diagnostic-spinner" aria-hidden="true" /><strong>正在加载今日学习计划…</strong><span>内容准备完成后会自动显示。</span></article></div>;
   if (dashboard) {
     const continueTask = dashboard.tasks.find((task) => task.status === "in_progress") ?? dashboard.tasks.find((task) => task.status === "todo");
     const nodePositions = [
