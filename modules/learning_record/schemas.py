@@ -53,6 +53,7 @@ class LearningActivityListResponse(BaseModel):
     page: int
     page_size: int = Field(alias="pageSize")
     has_next: bool = Field(alias="hasNext")
+    summary: dict[str, Any] = Field(default_factory=dict)
 
 
 class LearningEventRequest(BaseModel):

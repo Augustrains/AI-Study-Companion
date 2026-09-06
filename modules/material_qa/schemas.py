@@ -18,6 +18,7 @@ class MaterialQaSource(BaseModel):
     section_id: str = Field(default="", alias="sectionId")
     content_unit_id: str = Field(default="", alias="contentUnitId")
     book_id: str = Field(default="", alias="bookId")
+    index_version: str = Field(default="", alias="indexVersion")
 
 
 class CreateMaterialQaConversationRequest(BaseModel):
@@ -68,6 +69,22 @@ class FinishMaterialQaLearningTaskRequest(BaseModel):
 
     book_id: str = Field(alias="bookId", min_length=1)
     user_id: str = Field(alias="userId", min_length=1)
+
+
+class RebuildMaterialIndexRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    book_ids: list[Literal["ml", "dl"]] = Field(default_factory=lambda: ["ml", "dl"], alias="bookIds")
+    confirm: bool = False
+
+
+class ReviewMaterialDocumentRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    book_id: Literal["ml", "dl"] = Field(alias="bookId")
+    status: Literal["approved", "rejected", "pending_review"]
+    reviewer: str = Field(min_length=1)
+    reason: str = Field(default="", max_length=2000)
 
 
 class AskMaterialQuestionResponse(BaseModel):

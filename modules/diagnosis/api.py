@@ -40,6 +40,7 @@ def build_router(workflow: DiagnosisWorkflow) -> APIRouter:
             learning_goal=payload.learning_goal,
             learning_plan_day_id=payload.learning_plan_day_id,
             learning_plan_item_id=payload.learning_plan_item_id,
+            task_mode=payload.task_mode,
         )
         return result
 

@@ -20,8 +20,14 @@ front/frontend/dist/
 
 # Local runtime data and temporary files
 tmp/
+.tmp/
+.pytest_tmp*/
 .test-data/
 *.log
+
+# Local comparison/checkout copy
+StudyCompanion-Hector/
+front/frontend/.plan-ui-backup-*/
 
 # Generated local AI assets and runtime persistence
 models/
@@ -47,6 +53,7 @@ data/question_new/教材/
 # 运行时产物
 data/qdrant-bge-m3/
 data/_demo_backup/
+data/material-reports/
 
 # 账号凭据，永远不进版本库
 data/auth/

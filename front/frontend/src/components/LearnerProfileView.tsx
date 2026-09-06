@@ -121,6 +121,121 @@ function describeSaveError(error: unknown): string {
 const levelLabel = (value: string) => SELF_LEVELS.find((item) => item.value === value)?.label ?? "尚未填写";
 
 export function LearnerProfileView({ bookId }: { bookId: BookId }) {
+
+const domains: Record<string, { value: string; label: string }> = {
+  ml: { value: "machine_learning", label: "机器学习" },
+  dl: { value: "deep_learning", label: "深度学习" },
+};
+
+/** 与后端 field_rules.py 的 self_assessed_level 取值一一对应，不能随便加。 */
+const SELF_LEVELS: Array<{ value: string; label: string; hint: string }> = [
+  { value: "none", label: "完全没接触过", hint: "从零开始，诊断会从最基础的题问起。" },
+  { value: "basic", label: "看过一些概念", hint: "听过主要名词，但没动手做过。" },
+  { value: "practice", label: "跟着做过练习", hint: "跟教程或课程做过例子，独立做还没把握。" },
+  { value: "independent", label: "能独立解决问题", hint: "能自己完成任务，想查漏补缺。" },
+];
+
+const ACTIVITY_TYPES: Array<{ value: string; label: string }> = [
+  { value: "reading", label: "阅读讲解" },
+  { value: "quiz", label: "做题练习" },
+  { value: "project", label: "动手项目" },
+  { value: "video", label: "视频课程" },
+];
+
+const CONTENT_STYLES: Array<{ value: string; label: string }> = [
+  { value: "balanced", label: "均衡" },
+  { value: "concise", label: "简明扼要" },
+  { value: "detailed", label: "详细展开" },
+  { value: "example_first", label: "先看例子" },
+];
+
+const DIFFICULTIES: Array<{ value: string; label: string }> = [
+  { value: "adaptive", label: "跟着我的水平走" },
+  { value: "easy", label: "偏简单" },
+  { value: "challenging", label: "偏有挑战" },
+];
+
+/**
+ * 单次学习时长档位。
+ * **必须与后端 modules/learner_profile/field_rules.py 的 SESSION_DURATION_CHOICES 一致**，
+ * tests/test_profile_contract.py 会强制校验两边不许漂移。
+ * 之前这里是个 10–120 步长 5 的滑块，选 75 分钟后端直接 field validation failed。
+ */
+const SESSION_DURATIONS = [15, 30, 45, 60, 90, 120];
+
+const durationLabel = (minutes: number) => (minutes >= 60 && minutes % 60 === 0 ? `${minutes / 60} 小时` : `${minutes} 分钟`);
+
+const FREQUENCIES: Array<{ value: string; label: string }> = [
+  { value: "daily", label: "每天" },
+  { value: "frequent", label: "每周三四次" },
+  { value: "occasional", label: "偶尔" },
+  { value: "flexible", label: "不固定" },
+];
+
+const defaultForm = (userId: string, domain: string): LearnerProfilePayload => ({
+  user_id: userId,
+  learning_domain: domain,
+  background: "",
+  self_assessed_level: "unknown",
+  // 这两个列表保留在契约里（后端字段没变），但这一页不再往里写东西：
+  // 逐知识点定性属于诊断的职责。
+  known_knowledge_point_ids: [],
+  known_knowledge_point_note: "",
+  unknown_knowledge_point_ids: [],
+  current_confusions: "",
+  additional_requirements: "",
+  preferences: {
+    activity_types: ["reading", "quiz"],
+    content_style: "balanced",
+    difficulty: "adaptive",
+    session_duration_minutes: 30,
+    learning_frequency: "flexible",
+  },
+});
+
+/** 后端字段名 → 界面上的说法，让报错能指到具体哪一项。 */
+const FIELD_LABELS: Record<string, string> = {
+  background: "当前学习背景",
+  self_assessed_level: "自评水平",
+  current_confusions: "当前困惑",
+  additional_requirements: "其他学习要求",
+  activity_types: "喜欢的学习方式",
+  content_style: "讲解风格",
+  difficulty: "难度倾向",
+  session_duration_minutes: "单次学习时长",
+  learning_frequency: "学习频率",
+};
+
+/**
+ * 把后端的校验错误翻译成人话。
+ * 后端在 details.issues 里给了具体是哪个字段、什么原因，
+ * 之前前端只显示 message，用户看到的就是一句没用的「field validation failed」。
+ */
+function describeSaveError(error: unknown): string {
+  const payload = error as { message?: string; details?: { issues?: Array<Record<string, unknown>> } };
+  const issues = payload?.details?.issues;
+  if (Array.isArray(issues) && issues.length > 0) {
+    const parts = issues.slice(0, 3).map((issue) => {
+      const field = String(issue.field ?? issue.name ?? "");
+      const reason = String(issue.reason ?? issue.message ?? issue.rule ?? "取值不合法");
+      return `${FIELD_LABELS[field] ?? (field || "某个字段")}：${reason}`;
+    });
+    return `保存失败 —— ${parts.join("；")}`;
+  }
+  return payload?.message || "保存失败，请稍后重试。";
+}
+
+const levelLabel = (value: string) => SELF_LEVELS.find((item) => item.value === value)?.label ?? "尚未填写";
+
+export function LearnerProfileView({
+  bookId,
+  onNotice,
+  onProfileSaved,
+}: {
+  bookId: BookId;
+  onNotice?: (title: string, message: string) => void;
+  onProfileSaved?: (bookId: BookId) => Promise<void>;
+}) {
   // 用当前登录用户，不再从 URL 参数取、也不再写死 user_001——
   // 画像和诊断、今日学习必须落在同一个账号下，否则闭环是断的。
   const userId = getCurrentUserId();
@@ -134,6 +249,19 @@ export function LearnerProfileView({ bookId }: { bookId: BookId }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [dailyMinutes, setDailyMinutes] = useState<number | null>(null);
+
+  // 每日学习时长属于「选书与目标」，画像只读取它来约束一次连续学习的时长，
+  // 不在画像里复制或保存第二份预算。
+  useEffect(() => {
+    let active = true;
+    void api.getLearnerGoal(bookId)
+      .then((result) => {
+        if (active) setDailyMinutes(result.exists && result.goal ? result.goal.dailyMinutes : null);
+      })
+      .catch(() => active && setDailyMinutes(null));
+    return () => { active = false; };
+  }, [bookId]);
 
   useEffect(() => {
     let active = true;
@@ -166,6 +294,21 @@ export function LearnerProfileView({ bookId }: { bookId: BookId }) {
     key: K,
     value: LearnerProfilePayload["preferences"][K],
   ) => setForm((current) => ({ ...current, preferences: { ...current.preferences, [key]: value } }));
+
+  const selectSessionDuration = (minutes: number) => {
+    if (dailyMinutes !== null && minutes > dailyMinutes) {
+      // 画像契约只接受固定时长档位，因而 35 分钟的每日预算只能回退到 30 分钟档，
+      // 绝不能把 35 直接写入画像导致后端字段校验失败。
+      const cappedMinutes = [...SESSION_DURATIONS].reverse().find((duration) => duration <= dailyMinutes) ?? SESSION_DURATIONS[0];
+      updatePreference("session_duration_minutes", cappedMinutes);
+      onNotice?.(
+        "已调整单次学习时长",
+        `单次学习时长不能超过每日学习时间（${dailyMinutes} 分钟），已自动调整为 ${durationLabel(cappedMinutes)}。`,
+      );
+      return;
+    }
+    updatePreference("session_duration_minutes", minutes);
+  };
 
   const toggleActivity = (value: string) => {
     const current = form.preferences.activity_types;
@@ -203,6 +346,7 @@ export function LearnerProfileView({ bookId }: { bookId: BookId }) {
       setForm(result.profile ?? payload);
       setEditing(false);
       setMessage(`${domain.label}学习画像已保存。`);
+      await onProfileSaved?.(bookId);
     } catch (saveError) {
       setError(describeSaveError(saveError));
     } finally {
@@ -394,12 +538,18 @@ export function LearnerProfileView({ bookId }: { bookId: BookId }) {
                   key={minutes}
                   className={`pill-option ${form.preferences.session_duration_minutes === minutes ? "selected" : ""}`}
                   onClick={() => updatePreference("session_duration_minutes", minutes)}
+                  onClick={() => selectSessionDuration(minutes)}
                 >
                   {durationLabel(minutes)}
                 </button>
               ))}
             </div>
             <small className="profile-pref-hint">决定单个学习任务能排多长：选 2 小时，计划里就会出现一到两小时的任务。</small>
+            <small className="profile-pref-hint">
+              {dailyMinutes === null
+                ? "决定单个学习任务能排多长：选 2 小时，计划里就会出现一到两小时的任务。"
+                : `当前每日学习时间为 ${dailyMinutes} 分钟；选择超过该时长的选项会自动调整。`}
+            </small>
           </div>
           </div>
         </section>

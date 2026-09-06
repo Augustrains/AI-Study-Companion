@@ -25,9 +25,19 @@ class QuestionPlanningInput:
 
     learning_goal: str
     knowledge_point_mastery: dict[str, str]
-    knowledge_point_review: dict[str, dict[str, Any]]
     available_question_counts: dict[str, int]
+    knowledge_point_review: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Compatibility for the earlier name used by existing callers. New code
+    # should use ``knowledge_point_review`` because it stores review schedules.
+    knowledge_point_memory: dict[str, dict[str, Any]] = field(default_factory=dict)
     knowledge_point_catalog: dict[str, dict[str, str]] = field(default_factory=dict)
+    # Derived from persisted diagnostic sessions before a new session starts.
+    answered_question_ids: list[str] = field(default_factory=list)
+    diagnosis_round: int = 1
+
+    @property
+    def review_states(self) -> dict[str, dict[str, Any]]:
+        return self.knowledge_point_review or self.knowledge_point_memory
 
 
 @dataclass(frozen=True)
@@ -136,6 +146,8 @@ class DiagnosisState(TypedDict, total=False):
     knowledge_point_mastery: dict[str, str]
     knowledge_point_review: dict[str, dict[str, Any]]
     knowledge_point_states: dict[str, dict[str, Any]]
+    answered_question_ids: list[str]
+    diagnosis_round: int
     questions: list[dict[str, Any]]
     correct_answers: dict[str, str]
     answers: dict[str, str]

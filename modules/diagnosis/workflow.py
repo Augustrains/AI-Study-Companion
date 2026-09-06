@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import time
 from typing import Any
 from uuid import uuid4
 
@@ -38,6 +39,15 @@ def build_diagnosis_graph(
     """构建一轮诊断的固定状态机。"""
 
     def load_questions(state: DiagnosisState) -> dict[str, Any]:
+        # 每日计划已提前生成题目时，直接复用缓存，避免再次规划和选题。
+        if state.get("questions"):
+            return {
+                "questions": state["questions"],
+                "correct_answers": state.get("correct_answers", {}),
+                "answers": {},
+                "answer_metadata": {},
+                "status": "waiting_for_answers",
+            }
         domain = {
             "ml": "machine_learning",
             "ml-001": "machine_learning",
@@ -57,6 +67,8 @@ def build_diagnosis_graph(
                 knowledge_point_review=state.get("knowledge_point_review", {}),
                 available_question_counts=question_bank.get_question_inventory(state["book_id"]),
                 knowledge_point_catalog=catalog,
+                answered_question_ids=state.get("answered_question_ids", []),
+                diagnosis_round=state.get("diagnosis_round", 1),
             )
         )
         plan_by_point = {
@@ -70,6 +82,8 @@ def build_diagnosis_graph(
         questions, correct_answers = question_bank.get_questions(
             state["book_id"],
             question_plan=plan_by_point,
+            exclude_question_ids=set(state.get("answered_question_ids", [])),
+            rotation_seed=f"{state['user_id']}:{state.get('diagnosis_round', 1)}",
         )
         return {
             "questions": [DiagnosisService.question_payload(question) for question in questions],
@@ -203,19 +217,47 @@ class DiagnosisWorkflow:
             )
         return state
 
-    def start_diagnosis(self, *, user_id: str, book_id: str, learning_goal: str, learning_plan_day_id: int | None = None, learning_plan_item_id: int | None = None) -> dict[str, Any]:
+    def start_diagnosis(self, *, user_id: str, book_id: str, learning_goal: str, learning_plan_day_id: int | None = None, learning_plan_item_id: int | None = None, task_mode: str = "diagnostic") -> dict[str, Any]:
         values = parse_start_fields(user_id, book_id, learning_goal)
         diagnosis_id = f"diag_{uuid4().hex[:10]}"
         self.start(
             diagnosis_id=diagnosis_id,
             user_id=values["user_id"],
             book_id=values["book_id"],
-            learning_goal=values["learning_goal"], learning_plan_day_id=learning_plan_day_id, learning_plan_item_id=learning_plan_item_id,
+            learning_goal=values["learning_goal"], learning_plan_day_id=learning_plan_day_id, learning_plan_item_id=learning_plan_item_id, task_mode=task_mode,
         )
         return {"diagnostic_id": diagnosis_id, "questions": self._state(diagnosis_id)["questions"]}
 
-    def start(self, *, diagnosis_id: str, user_id: str, book_id: str, learning_goal: str, learning_plan_day_id: int | None = None, learning_plan_item_id: int | None = None) -> dict[str, Any]:
+    def start(self, *, diagnosis_id: str, user_id: str, book_id: str, learning_goal: str, learning_plan_day_id: int | None = None, learning_plan_item_id: int | None = None, task_mode: str = "diagnostic") -> dict[str, Any]:
+        database_binding: dict[str, int] | None = None
+        # 先校验任务是否按计划解锁，避免在题目规划/缓存等待后才返回 400。
+        if learning_plan_day_id is not None and task_mode != "practice":
+            if self.database_repository is None:
+                raise RuntimeError("MySQL diagnosis repository is not configured")
+            try:
+                database_binding = self.database_repository.start_daily_session(
+                    user_id=int(user_id),
+                    learning_plan_day_id=learning_plan_day_id,
+                    learning_plan_item_id=learning_plan_item_id,
+                )
+            except ValueError as exc:
+                raise ValidationAppError("daily diagnosis requires a numeric userId") from exc
         knowledge_point_states = self._knowledge_point_states(user_id, book_id)
+        planning_history = self._planning_history(user_id, book_id)
+        cached: dict[str, Any] | None = None
+        # 计划生成会在后台准备题目。给它一个短暂窗口，命中后直接进入答题，
+        # 避免诊断接口重新执行一次规划和选题。
+        if learning_plan_item_id is not None and self.database_repository is not None:
+            status_reader = getattr(self.database_repository, "get_prepared_content_status", None)
+            status = status_reader(item_id=int(learning_plan_item_id)) if callable(status_reader) else "pending"
+            if status == "pending":
+                for _ in range(100):
+                    cached = self.database_repository.load_prepared_content(item_id=int(learning_plan_item_id))
+                    if cached and int(cached.get("format_version", 0)) >= 2 and cached.get("kind") in {"diagnostic", "practice"} and cached.get("questions"):
+                        break
+                    time.sleep(0.2)
+            else:
+                cached = self.database_repository.load_prepared_content(item_id=int(learning_plan_item_id))
         mastery = {
             point_id: self._mastery_level(float(item.get("masteryScore") or 0.0))
             for point_id, item in knowledge_point_states.items()
@@ -233,18 +275,17 @@ class DiagnosisWorkflow:
                 "knowledge_point_mastery": mastery,
                 "knowledge_point_review": review_by_point,
                 "knowledge_point_states": knowledge_point_states,
+                "answered_question_ids": planning_history["answered_question_ids"],
+                "diagnosis_round": planning_history["diagnosis_round"],
                 "status": "started",
+                "questions": cached["questions"] if cached else [],
+                "correct_answers": cached.get("correct_answers", {}) if cached else {},
             },
             config=self._config(diagnosis_id),
         )
-        if learning_plan_day_id is not None:
-            if self.database_repository is None:
-                raise RuntimeError("MySQL diagnosis repository is not configured")
-            try:
-                binding = self.database_repository.start_daily_session(user_id=int(user_id), learning_plan_day_id=learning_plan_day_id, learning_plan_item_id=learning_plan_item_id)
-            except ValueError as exc:
-                raise ValidationAppError("daily diagnosis requires a numeric userId") from exc
-            self.graph.update_state(self._config(diagnosis_id), {"database_session_id": binding["session_id"], "database_plan_id": binding["plan_id"], "database_plan_item_id": binding.get("item_id")})
+        if learning_plan_day_id is not None and task_mode != "practice":
+            assert database_binding is not None
+            self.graph.update_state(self._config(diagnosis_id), {"database_session_id": database_binding["session_id"], "database_plan_id": database_binding["plan_id"], "database_plan_item_id": database_binding.get("item_id")})
         return {"type": "answer_request", "diagnosis_id": diagnosis_id, "questions": self._state(diagnosis_id)["questions"]}
 
     def submit_answer(
@@ -341,6 +382,16 @@ class DiagnosisWorkflow:
             )
         except ValueError:
             return {}
+
+    def _planning_history(self, user_id: str, book_id: str) -> dict[str, Any]:
+        if self.database_repository is None:
+            return {"diagnosis_round": 1, "answered_question_ids": []}
+        try:
+            return self.database_repository.load_planning_history(
+                user_id=int(user_id), book_id=self._database_book_id(book_id)
+            )
+        except ValueError:
+            return {"diagnosis_round": 1, "answered_question_ids": []}
 
     @staticmethod
     def _database_book_id(book_id: str) -> int:

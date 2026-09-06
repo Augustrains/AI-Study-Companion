@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
+import re
 from typing import Any
 
-from modules.common.errors import ResourceNotFoundError
-from modules.diagnosis.workflow import DiagnosisWorkflow
 from modules.learning_plan.module import LearningPlanModule
 from modules.learning_record.models import LearningActivity
 from modules.learning_record.module import LearningRecordModule
@@ -33,24 +32,40 @@ KNOWLEDGE_POINT_LABELS = {
 
 
 class TodayLearningModule:
-    def __init__(self, learning_plan: LearningPlanModule, learning_record: LearningRecordModule, diagnosis: DiagnosisWorkflow) -> None:
+    """Read-only dashboard assembled from the active persisted weekly plan."""
+
+    def __init__(self, learning_plan: LearningPlanModule, learning_record: LearningRecordModule) -> None:
         self.learning_plan = learning_plan
         self.learning_record = learning_record
-        self.diagnosis = diagnosis
 
     def get_today_learning(self, *, user_id: str, book_id: str) -> dict[str, Any]:
         values = validate_query(user_id, book_id)
-        book = BOOKS.get(values["book_id"], {"id": values["book_id"], "title": values["book_id"], "shortTitle": values["book_id"], "subtitle": ""})
-        plan = self.learning_plan.get_saved(book_id=values["book_id"])
+        book_key = values["book_id"]
+        book = BOOKS.get(book_key, {"id": book_key, "title": book_key, "shortTitle": book_key, "subtitle": ""})
+        # Authentication is still allowed to fall back to a browser-local
+        # account. Such an account has no MySQL numeric user ID yet, so it is
+        # a valid empty dashboard rather than a server error or mock fallback.
+        try:
+            plan = self.learning_plan.get_weekly(
+                user_id=int(values["user_id"]), book_id=self._database_book_id(book_key)
+            )
+        except ValueError:
+            plan = None
+        tasks = self._tasks_for_today(plan)
+        all_tasks = self._all_tasks(plan)
+        task_titles = {str(task.get("title") or "") for task in all_tasks}
         activities = [
             activity
             for activity in self.learning_record.list_activities(values["user_id"], page=1, page_size=100)["records"]
-            if activity.book_id in {values["book_id"], RECORD_BOOK_IDS.get(values["book_id"], values["book_id"])}
+            if activity.book_id in {book_key, RECORD_BOOK_IDS.get(book_key, book_key)}
+            # Older task events were saved before book_id was included.  Keep
+            # those events only when their title matches this plan, avoiding
+            # cross-book leakage while recovering their recorded duration.
+            or (not activity.book_id and activity.category == "task" and str(activity.detail.get("task_title") or "") in task_titles)
         ]
-        tasks = self._tasks(plan)
-        goal = str((plan or {}).get("goal") or self._latest_goal(activities) or "")
+        goal = str((plan or {}).get("plan", {}).get("goal") or self._latest_goal(activities) or "")
         graph = self._knowledge_graph(activities, goal, tasks)
-        progress = self._weekly_progress(activities, tasks)
+        progress = self._weekly_progress(activities, all_tasks)
         recommendation = self._recommendation(tasks, graph)
         continue_learning = self._continue_learning(tasks)
         completed = sum(task.get("status") == "completed" for task in tasks)
@@ -85,19 +100,63 @@ class TodayLearningModule:
         return payload
 
     @staticmethod
-    def _tasks(plan: dict[str, Any] | None) -> list[dict[str, Any]]:
+    def _all_tasks(plan: dict[str, Any] | None) -> list[dict[str, Any]]:
         if not plan:
             return []
-        today = date.today().isoformat()
-        result = []
-        for task in plan.get("tasks") or []:
-            expected_date = task.get("expected_completion_date") or task.get("expectedCompletionDate")
-            if expected_date and expected_date != today:
-                continue
-            normalized = dict(task)
-            normalized.setdefault("expected_completion_date", expected_date or today)
-            result.append(normalized)
+        result: list[dict[str, Any]] = []
+        for day in plan.get("days", []):
+            expected_date = str(day["expected_date"])
+            for item in day.get("items", []):
+                title = str(item["title"])
+                result.append({
+                    "id": str(item["id"]),
+                    "title": title,
+                    "type": TodayLearningModule._task_type(item),
+                    "minutes": TodayLearningModule._minutes(title, str(item.get("description") or "")),
+                    "status": str(item["status"]),
+                    "reason": str(item.get("adaptive_reason") or day.get("adaptive_reason") or ""),
+                    "description": str(item.get("description") or ""),
+                "knowledgePointIds": [],
+                "planDayId": str(day.get("id")),
+                "expectedCompletionDate": expected_date,
+                # These timestamps are the authoritative execution timeline.
+                # LearningActivity is an audit trail and can be absent for
+                # legacy tasks, so the dashboard must not depend on it for
+                # elapsed study time.
+                "startedAt": item.get("started_at"),
+                "completedAt": item.get("completed_at"),
+                })
         return result
+
+    @classmethod
+    def _tasks_for_today(cls, plan: dict[str, Any] | None) -> list[dict[str, Any]]:
+        return [
+            task for task in cls._all_tasks(plan)
+            if task["expectedCompletionDate"] == date.today().isoformat()
+        ]
+
+    @staticmethod
+    def _minutes(title: str, description: str) -> int:
+        match = re.search(r"(\d+)\s*(?:分钟|min)", f"{title} {description}", re.IGNORECASE)
+        return int(match.group(1)) if match else 0
+
+    @staticmethod
+    def _task_type(item: dict[str, Any]) -> str:
+        source = str(item.get("source") or "")
+        if source == "review_due":
+            return "能力诊断"
+        if source == "spaced_review":
+            return "间隔复习"
+        if source == "weak_point":
+            return "针对性学习"
+        return str(item.get("item_type") or "学习任务")
+
+    @staticmethod
+    def _database_book_id(book_id: str) -> int:
+        aliases = {"ml": 2, "ml-001": 2, "machine_learning": 2, "dl": 1, "dl-001": 1, "deep_learning": 1}
+        if book_id in aliases:
+            return aliases[book_id]
+        return int(book_id)
 
     @staticmethod
     def _latest_goal(activities: list[LearningActivity]) -> str:
@@ -138,20 +197,42 @@ class TodayLearningModule:
     def _weekly_progress(activities: list[LearningActivity], tasks: list[dict[str, Any]]) -> WeeklyProgress:
         now = datetime.now(timezone.utc)
         start = now - timedelta(days=now.weekday())
-        weekly = []
         daily: dict[str, int] = {}
         correct = total = 0
+
+        # Prefer the timestamps persisted with the plan item.  A task event
+        # used to be the only source here, which meant MySQL could contain a
+        # perfectly valid started_at/completed_at pair while this card still
+        # displayed 0 h.
+        timed_task_ids: set[str] = set()
+        for task in tasks:
+            started = TodayLearningModule._as_utc_datetime(task.get("startedAt"))
+            completed_at = TodayLearningModule._as_utc_datetime(task.get("completedAt"))
+            if started is None or completed_at is None or completed_at <= started or completed_at < start:
+                continue
+            seconds = int((completed_at - started).total_seconds())
+            if seconds <= 0:
+                continue
+            timed_task_ids.add(str(task.get("id", "")))
+            key = completed_at.date().isoformat()
+            daily[key] = daily.get(key, 0) + seconds
+
         for activity in activities:
             try:
                 occurred = datetime.fromisoformat(activity.occurred_at.replace("Z", "+00:00"))
             except ValueError:
                 continue
+            if occurred.tzinfo is None:
+                occurred = occurred.replace(tzinfo=timezone.utc)
             if occurred < start:
                 continue
-            weekly.append(activity)
+            # Keep activity data as a compatibility fallback for imported or
+            # older records without task timestamps, but never count a task
+            # twice.
             seconds = int(activity.result.get("duration_seconds", activity.result.get("durationSeconds", 0)) or 0)
-            key = occurred.date().isoformat()
-            daily[key] = daily.get(key, 0) + seconds
+            if str(activity.task_id or "") not in timed_task_ids:
+                key = occurred.date().isoformat()
+                daily[key] = daily.get(key, 0) + seconds
             correct += int(activity.result.get("correct_count", activity.result.get("correctCount", 0)) or 0)
             total += int(activity.result.get("total_count", activity.result.get("totalCount", 0)) or 0)
         completed = sum(task.get("status") == "completed" for task in tasks)
@@ -164,6 +245,21 @@ class TodayLearningModule:
             accuracy=round(correct / total * 100, 2) if total else 0,
             daily_duration=[{"date": day, "durationSeconds": seconds} for day, seconds in sorted(daily.items())],
         )
+
+    @staticmethod
+    def _as_utc_datetime(value: Any) -> datetime | None:
+        """Parse MySQL or JSON timestamps into a comparable UTC datetime."""
+        if isinstance(value, datetime):
+            parsed = value
+        elif isinstance(value, str) and value:
+            try:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+        else:
+            return None
+        # MySQL DATETIME values are stored without a zone in this project.
+        return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
 
     @staticmethod
     def _recommendation(tasks: list[dict[str, Any]], graph: dict[str, Any]) -> dict[str, Any] | None:

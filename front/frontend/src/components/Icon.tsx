@@ -1,4 +1,5 @@
 export type IconName = "home" | "target" | "calendar" | "chart" | "chat" | "user" | "settings" | "help" | "book-open" | "book" | "chevron-down" | "chevron-right" | "arrow-right" | "arrow-up-right" | "check" | "check-circle" | "clock" | "spark" | "file" | "send" | "info" | "filter" | "plus" | "more" | "close" | "alert" | "shield" | "bell" | "download" | "trash" | "log-out" | "lock" | "users" | "heart" | "bookmark" | "search" | "trophy";
+export type IconName = "home" | "target" | "calendar" | "chart" | "chat" | "user" | "settings" | "help" | "book-open" | "book" | "chevron-down" | "chevron-left" | "chevron-right" | "arrow-right" | "arrow-up-right" | "check" | "check-circle" | "clock" | "spark" | "file" | "send" | "info" | "filter" | "plus" | "more" | "close" | "alert" | "shield" | "bell" | "download" | "trash" | "log-out" | "lock" | "users" | "heart" | "bookmark" | "search";
 
 const paths: Record<IconName, string> = {
   trophy: "M8 21h8M12 17v4M7 4h10v4a5 5 0 0 1-10 0V4Zm0 2H4v1a4 4 0 0 0 4 4m9-5h3v1a4 4 0 0 1-4 4",
@@ -17,6 +18,7 @@ const paths: Record<IconName, string> = {
   "book-open": "M3 5.5A2.5 2.5 0 0 1 5.5 3H11v16H5.5A2.5 2.5 0 0 0 3 21V5.5Zm18 0A2.5 2.5 0 0 0 18.5 3H13v16h5.5A2.5 2.5 0 0 1 21 21V5.5Z",
   book: "M5 4h12a2 2 0 0 1 2 2v14H7a2 2 0 0 0-2 2V4Zm0 0a2 2 0 0 0-2 2v14a2 2 0 0 1 2-2h14",
   "chevron-down": "m6 9 6 6 6-6",
+  "chevron-left": "m15 18-6-6 6-6",
   "chevron-right": "m9 6 6 6-6 6",
   "arrow-right": "M4 12h16m-6-6 6 6-6 6",
   "arrow-up-right": "M7 17 17 7m-8 0h8v8",

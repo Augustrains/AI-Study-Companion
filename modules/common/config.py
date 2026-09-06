@@ -116,6 +116,7 @@ class Settings:
         # usable when the interpreter cannot round-trip the absolute path.
         if project_dir is None:
             load_dotenv(".env", override=False)
+        # 允许从项目根目录 .env 读取配置；显式系统环境变量优先。
         load_dotenv(root / ".env", override=False)
         data_dir = Path(os.getenv("STUDY_COMPANION_DATA_DIR", root / "data")).resolve()
         return cls(

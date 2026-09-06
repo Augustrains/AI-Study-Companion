@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date
+
 from fastapi import APIRouter, HTTPException, Query
 from modules.common import api as common_api
 
@@ -22,7 +24,11 @@ def build_router(module: LearningRecordModule) -> APIRouter:
             plan_id=payload.plan_id,
             book_id=payload.book_id,
             knowledge_point_ids=payload.knowledge_point_ids,
-            detail=payload.detail,
+            detail={
+                **payload.detail,
+                "duration_seconds": payload.duration_seconds,
+                "planned_minutes": payload.planned_minutes,
+            },
             client_request_id=payload.client_request_id,
         )
         return LearningEventResponse(
@@ -39,6 +45,8 @@ def build_router(module: LearningRecordModule) -> APIRouter:
         activity_type: str | None = Query(default=None, alias="activityType"),
         status: str | None = None,
         book_id: str | None = Query(default=None, alias="bookId"),
+        start_date: date | None = Query(default=None, alias="startDate"),
+        end_date: date | None = Query(default=None, alias="endDate"),
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=20, alias="pageSize", ge=1, le=100),
     ) -> LearningActivityListResponse:
@@ -48,12 +56,17 @@ def build_router(module: LearningRecordModule) -> APIRouter:
             activity_type=activity_type,
             status=status,
             book_id=book_id,
+            start_date=start_date,
+            end_date=end_date,
             page=page,
             page_size=page_size,
         )
+        summary_start = start_date or date.today()
+        summary_end = end_date or summary_start
         response_data = {
             **result,
             "records": [common_api.serialization.to_data(activity) for activity in result["records"]],
+            "summary": module.overview(user_id=user_id.strip(), start_date=summary_start, end_date=summary_end),
         }
         return LearningActivityListResponse.model_validate(response_data)
 
