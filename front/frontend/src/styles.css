@@ -139,7 +139,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .qa-attachment-preview small { color: var(--muted); font-size: 9px; }
 .qa-attachment-preview button, .qa-attach-button { display: grid; place-items: center; flex: 0 0 auto; color: #66809b; background: #edf6ff; border: 1px solid #d8eafb; border-radius: 8px; }
 .qa-attachment-preview button { width: 30px; height: 30px; }
-.qa-attach-button { width: 42px; height: 42px; align-self: end; }
+.qa-attach-button { width: 62px; height: 42px; align-self: end; gap: 3px; font-size: 10px; font-weight: 700; }
 .qa-attach-button:hover, .qa-attachment-preview button:hover { color: var(--blue); border-color: #9cc7fb; }
 .qa-attach-button:disabled, .qa-attachment-preview button:disabled { cursor: not-allowed; opacity: .55; }
 .chat-composer textarea { flex: 1; min-width: 0; }
@@ -342,17 +342,6 @@ button, a { -webkit-tap-highlight-color: transparent; }
   .page-stack:has(.monthly-calendar) { display: flex; flex-direction: column; }
   .page-stack:has(.monthly-calendar) > * { width: 100%; box-sizing: border-box; }
   .page-stack:has(.monthly-calendar) > .plan-bottom-grid { flex-direction: column; }
-}
-
-/* 桌面端计划页固定在一个视口内；只有当天任务列表内部滚动。 */
-@media (min-width: 901px) {
-  .page-stack:has(.monthly-calendar) { height: calc(100vh - 135px); min-height: 560px; overflow: hidden; }
-  .page-stack:has(.monthly-calendar) .page-header { margin-top: 0; margin-bottom: 8px; }
-  .page-stack:has(.monthly-calendar) .plan-top-grid { height: 230px; }
-  .page-stack:has(.monthly-calendar) .plan-content-grid { min-height: 0; height: calc(100% - 238px); }
-  .page-stack:has(.monthly-calendar) .plan-content-grid > .selected-day-tasks { height: 100%; max-height: none; }
-  .page-stack:has(.monthly-calendar) .plan-content-grid > .plan-workspace,
-  .page-stack:has(.monthly-calendar) .plan-content-grid > .plan-bottom-grid { min-height: 0; }
 }
 
 @media (min-width: 901px) {

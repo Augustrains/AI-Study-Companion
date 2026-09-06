@@ -120,7 +120,8 @@ function describeSaveError(error: unknown): string {
 
 const levelLabel = (value: string) => SELF_LEVELS.find((item) => item.value === value)?.label ?? "尚未填写";
 
-export function LearnerProfileView({ bookId }: { bookId: BookId }) {
+if (false) {
+function LegacyLearnerProfileView({ bookId }: { bookId: BookId }) {
 
 const domains: Record<string, { value: string; label: string }> = {
   ml: { value: "machine_learning", label: "机器学习" },
@@ -227,6 +228,7 @@ function describeSaveError(error: unknown): string {
 
 const levelLabel = (value: string) => SELF_LEVELS.find((item) => item.value === value)?.label ?? "尚未填写";
 
+}}
 export function LearnerProfileView({
   bookId,
   onNotice,
@@ -537,7 +539,6 @@ export function LearnerProfileView({
                   type="button"
                   key={minutes}
                   className={`pill-option ${form.preferences.session_duration_minutes === minutes ? "selected" : ""}`}
-                  onClick={() => updatePreference("session_duration_minutes", minutes)}
                   onClick={() => selectSessionDuration(minutes)}
                 >
                   {durationLabel(minutes)}

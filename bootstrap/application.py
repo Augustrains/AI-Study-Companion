@@ -130,7 +130,7 @@ def build_api_dependencies(settings: common_api.config.Settings | None = None) -
     learner_goal_module = LearnerGoalModule(
         repository=MysqlLearnerGoalRepository(database_engine)
     )
-    today_learning_module = TodayLearningModule(learning_plan_module, learning_record_module, diagnosis_workflow)
+    today_learning_module = TodayLearningModule(learning_plan_module, learning_record_module)
     material_qa_attachment_service = MaterialQaAttachmentService(
         storage=OssAttachmentStorage.from_settings(settings),
         repository=MysqlMaterialQaAttachmentRepository(database_engine),

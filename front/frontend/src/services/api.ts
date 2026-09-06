@@ -151,7 +151,6 @@ export type LearningActivity = {
   result: Record<string, unknown>;
   detail: Record<string, unknown>;
 };
-export type LearningActivityList = { records: LearningActivity[]; total: number; page: number; pageSize: number; hasNext: boolean };
 export type LearningRecordSummary = {
   today: { activityCount: number; completedTasks: number; studyMinutes: number; diagnosticAccuracy: number | null };
   calendar: Array<{ date: string; activityCount: number; completedTasks: number; studyMinutes: number }>;
@@ -207,7 +206,6 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const isFormData = typeof FormData !== "undefined" && init?.body instanceof FormData;
     const response = await fetch(`${API_BASE_URL}${path}`, {
       headers: { ...(isFormData ? {} : { "Content-Type": "application/json" }), ...getAuthHeaders(), ...init?.headers },
-      headers: { "Content-Type": "application/json", ...getAuthHeaders(), ...init?.headers },
       signal: controller.signal,
       ...init,
     });
@@ -380,7 +378,6 @@ export const mockApi = {
       })(),
     };
   },
-  async writeLearningEvent(payload: { taskId: string; eventType: string; status: string; durationSeconds?: number; plannedMinutes?: number }) {
   async writeLearningEvent(payload: { taskId: string; eventType: string; status: string; bookId?: BookId; durationSeconds?: number; plannedMinutes?: number }) {
     await wait(260);
     return { eventId: `event-${Date.now()}`, ...payload, saved: true };
@@ -616,15 +613,6 @@ export const realApi = {
   finishDiagnostic: (diagnosticId: string) => request<DiagnosticResult>(`/diagnostics/${diagnosticId}/finish`, { method: "POST" }),
   submitCalibration: (payload: { diagnosticId: string; level: string; reason: string }) => request("/learner-calibrations", { method: "POST", body: JSON.stringify(payload) }),
   generatePlan: (payload: { diagnosticId: string; bookId: BookId; goal: string }) => request<LearningPlanResult>("/learning-plans/generate", { method: "POST", body: JSON.stringify({ ...payload, userId: getCurrentUserId() }) }),
-  createMaterialPlan: (payload: MaterialLearningPlanPayload) => request<LearningPlanResult>("/learning-plans/material", { method: "POST", body: JSON.stringify({ ...payload, userId: getCurrentUserId() }) }),
-  getLearningPlan: (bookId: BookId, diagnosticId?: string) => {
-    const query = new URLSearchParams({ bookId, userId: getCurrentUserId() });
-    if (diagnosticId) query.set("diagnosticId", diagnosticId);
-    return request<LearningPlanLookup>(`/learning-plans?${query.toString()}`);
-  },
-  getTodayLearning: (bookId: BookId) => request<TodayLearningResponse>(`/today-learning?userId=${encodeURIComponent(getCurrentUserId())}&bookId=${encodeURIComponent(bookId)}`),
-  writeLearningEvent: (payload: { taskId: string; taskTitle: string; eventType: string; status: string; durationSeconds?: number; plannedMinutes?: number }) => request("/learning-events", { method: "POST", body: JSON.stringify({ ...payload, userId: getCurrentUserId() }) }),
-  getLearningRecords: (params?: { category?: string; page?: number; pageSize?: number }) => {
   generateWeeklyPlan: async (bookId: BookId, reason = "", aimLevel?: number): Promise<LearningPlanResult> => {
     const response = await request<WeeklyPlanPayload>("/learning-plans/weekly/generate", { method: "POST", body: JSON.stringify({ userId: Number(getCurrentUserId()), bookId: databaseBookId[bookId], reason, ...(aimLevel === undefined ? {} : { aimLevel }) }) });
     return asLearningPlan(response, bookId);
@@ -666,8 +654,6 @@ export const realApi = {
   },
   // 回读数据库中该用户消息绑定的附件，供消息气泡使用OSS公共URL展示。
   listQaAttachments: (messageId: number) => request<QaAttachment[]>(`/rag/messages/${messageId}/attachments?userId=${encodeURIComponent(getCurrentUserId())}`),
-  getLearnerProfile: (userId: string, learningDomain: string) => request<LearnerProfileResult>(`/learner-profile?user_id=${encodeURIComponent(userId)}&learning_domain=${encodeURIComponent(learningDomain)}`),
-  askQuestion: (payload: QaQuestionPayload) => request<QaResult>(`/rag/conversations/${encodeURIComponent(payload.conversationId ?? "")}/messages`, { method: "POST", body: JSON.stringify({ bookId: payload.bookId, question: payload.question, userId: getCurrentUserId(), allowGeneralFallback: payload.allowGeneralFallback ?? false, answerMode: payload.answerMode ?? "direct", learningTaskId: payload.learningTaskId ?? null }) }),
   getLearnerProfile: async (userId: string, learningDomain: string): Promise<LearnerProfileResult> => {
     const book = profileBookFor(learningDomain);
     const query = new URLSearchParams({ user_id: userId, book_id: String(book.databaseBookId) });

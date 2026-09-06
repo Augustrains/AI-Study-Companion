@@ -87,6 +87,10 @@ class WeeklyLearningPlanAgent:
             raise ValueError(f"daily_minutes must be at least {self.DIAGNOSTIC_MINUTES}")
 
         workloads = self._apply_user_focus(agent_input.workloads, agent_input.regeneration_reason)
+        # A request such as “希望更多编程题” is a task-format preference, not
+        # a knowledge-point name.  It must affect scheduling directly instead
+        # of merely appearing in the generated explanation.
+        requested_coding = self._requests_coding(agent_input.regeneration_reason)
         states, deferred_states, review_states = self._states(workloads)
         days: list[dict[str, Any]] = []
         for index in range(agent_input.plan_days):
@@ -101,7 +105,10 @@ class WeeklyLearningPlanAgent:
             # BKT-driven learning sequence.
             review_items = self._build_due_review_items(review_states, scheduled, capacity, durations)
             capacity -= sum(int(item["minutes"]) for item in review_items)
-            coding = "project" in profile["activity_types"] and (index % 2 == 1 or "quiz" not in profile["activity_types"])
+            coding = requested_coding or (
+                "project" in profile["activity_types"]
+                and (index % 2 == 1 or "quiz" not in profile["activity_types"])
+            )
             learning_items = [*review_items, *self._build_day_learning_items(states, capacity, durations, coding=coding, profile=profile)]
             requested_focus = next((state for state in states if state.get("user_requested_focus")), None)
             focus = requested_focus or (learning_items[0] if learning_items else self._next_focus(states))
@@ -177,6 +184,13 @@ class WeeklyLearningPlanAgent:
             matched = any(term and term in searchable for term in terms)
             adjusted.append({**workload, "priority_score": float(workload.get("priority_score") or 0) + (100.0 if matched else 0.0), "user_requested_focus": matched})
         return adjusted
+
+    @staticmethod
+    def _requests_coding(reason: str) -> bool:
+        """Recognize an explicit request to favor executable practice tasks."""
+
+        query = (reason or "").strip().lower()
+        return any(term in query for term in ("编程", "代码", "coding", "code", "programming", "项目实践"))
 
     def _apply_agent_reasons(self, days: list[dict[str, Any]], agent_input: WeeklyPlanningInput) -> None:
         if self.llm_client is None or not days:

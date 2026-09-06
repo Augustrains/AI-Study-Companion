@@ -15,6 +15,8 @@ from .schemas import (
     CreateMaterialQaConversationResponse,
     FinishMaterialQaLearningTaskRequest,
     MaterialQaAttachmentResponse,
+    RebuildMaterialIndexRequest,
+    ReviewMaterialDocumentRequest,
 )
 from .attachment_service import MaterialQaAttachmentService
 from .models import (
@@ -22,8 +24,6 @@ from .models import (
     MaterialQaAttachment,
     MaterialQaConversation,
     MaterialQaPendingAttachment,
-    RebuildMaterialIndexRequest,
-    ReviewMaterialDocumentRequest,
 )
 from .workflow import MaterialQaWorkflow
 

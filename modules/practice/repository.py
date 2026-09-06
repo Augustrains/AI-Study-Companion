@@ -137,10 +137,15 @@ class PracticeRepository:
         self._ensure_resumable_session_schema()
         with self.engine.begin() as connection:
             row = connection.execute(text("SELECT total_questions,correct_count FROM diagnostic_session WHERE id=:s AND user_id=:u AND session_type=2"), {"s": session_id, "u": user_id}).mappings().first()
-        if not row:
-            raise ValidationAppError("practice session does not exist")
-        connection.execute(text("UPDATE diagnostic_session SET completed_at=:now, updated_at=:now WHERE id=:s"), {"now": datetime.now().replace(microsecond=0), "s": session_id})
-        total, correct = int(row["total_questions"]), int(row["correct_count"])
+            if not row:
+                raise ValidationAppError("practice session does not exist")
+            # The update must share this transaction: the connection is closed when
+            # the context manager exits, so using it afterwards makes "结束本轮" fail.
+            connection.execute(
+                text("UPDATE diagnostic_session SET completed_at=:now, updated_at=:now WHERE id=:s"),
+                {"now": datetime.now().replace(microsecond=0), "s": session_id},
+            )
+            total, correct = int(row["total_questions"]), int(row["correct_count"])
         return {"sessionId": session_id, "answerCount": total, "correctCount": correct, "accuracy": round(correct * 100 / total, 1) if total else 0}
 
     def leaderboard(self, *, period: str, limit: int) -> list[dict[str, Any]]:

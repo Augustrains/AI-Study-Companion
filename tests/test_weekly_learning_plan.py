@@ -150,6 +150,24 @@ class WeeklyLearningPlanTest(unittest.TestCase):
         self.assertTrue(all(day["session_duration_minutes"] == 45 for day in result["days"]))
         self.assertTrue(any("（22分钟）" in item["title"] for item in active_items if item["title"].startswith("阅读：")))
 
+    def test_regeneration_request_for_coding_creates_coding_practice(self):
+        repository = FakePlanRepository()
+        context = repository.load_weekly_context(user_id=1, book_id=2)
+        module = LearningPlanModule(repository)
+        workloads = [module._workload(point, context) for point in context["points"]]
+
+        result = WeeklyLearningPlanAgent().build(
+            WeeklyPlanningInput(
+                context=context,
+                workloads=workloads,
+                start_date=date(2026, 9, 2),
+                regeneration_reason="希望更多编程题，增加代码练习",
+            )
+        )
+
+        items = [item for day in result["days"] for item in day["items"]]
+        self.assertTrue(any(item["title"].startswith("编程实践：") for item in items))
+
     def test_mastery_fusion_uses_rule_confidence_without_overwriting_bkt(self):
         fused = MasteryFusion().combine(
             bkt=BktEstimate(mastery_score=0.40, predicted_correct_rate=0.52, learning_rate=0.12, expected_practice_count=8, confidence=0.30),
